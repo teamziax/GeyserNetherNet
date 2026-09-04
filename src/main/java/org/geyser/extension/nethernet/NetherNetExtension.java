@@ -47,6 +47,7 @@ public class NetherNetExtension implements Extension {
     private final Object providerLifecycle = new Object();
     private volatile boolean stopping;
     private volatile ProviderClient providerClient;
+    private volatile ProviderShutdown providerShutdown;
     private final GameOutcomeReporter gameOutcomes = new GameOutcomeReporter();
     private volatile Supplier<ServerStatus> providerStatusSupplier = this::collectServerStatus;
 
@@ -155,10 +156,12 @@ public class NetherNetExtension implements Extension {
                 store = null; // ProviderClient now owns its lifetime.
                 synchronized (providerLifecycle) {
                     if (stopping) { client.close(); return; }
+                    try { providerShutdown = new ProviderShutdown(client::stop, message -> logger().warning(message)); }
+                    catch (RuntimeException failure) { client.close(); throw failure; }
                     providerClient = client;
                 }
                 client.start().whenComplete((registration, failure) -> {
-                    if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); client.close(); return; }
+                    if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); shutdown(); return; }
                     logger().info("Provider instance registered: " + registration.get("instanceId").getAsString());
                     if (registration.has("pendingAction")) logger().info(registration.getAsJsonObject("pendingAction").get("text").getAsString() + " " + registration.getAsJsonObject("pendingAction").get("url").getAsString());
                 });
@@ -244,7 +247,9 @@ public class NetherNetExtension implements Extension {
     private void shutdown() {
         synchronized (providerLifecycle) {
             stopping = true;
-            if (this.providerClient != null) { this.providerClient.close(); this.providerClient = null; }
+            if (providerShutdown != null) { providerShutdown.close(); providerShutdown = null; }
+            else if (providerClient != null) providerClient.close();
+            providerClient = null;
         }
         if (this.netherNetChannel != null) {
             this.netherNetChannel.close();
