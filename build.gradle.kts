@@ -107,7 +107,7 @@ tasks {
         filesMatching("META-INF/services/**") { duplicatesStrategy = DuplicatesStrategy.INCLUDE }
         mergeServiceFiles()
         manifest.attributes["Registration-Revision"] = providers.gradleProperty("registrationRevision").getOrElse("local-development")
-        manifest.attributes["Registration-Network-Revision"] = "12d62eaf993b69d4370bb65b3ba39a0fd132852a"
+        manifest.attributes["Registration-Network-Revision"] = "ff8a55c110ec67a6be21d4f9e2787d545486860f"
         dependencies {
             // Exclude netty apart from the http codec
             exclude {
