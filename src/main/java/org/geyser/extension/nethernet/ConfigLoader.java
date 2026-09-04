@@ -13,6 +13,7 @@ public class ConfigLoader {
     private static final ConfigurationTransformation.Versioned TRANSFORMER = ConfigurationTransformation.versionedBuilder()
         .versionKey("config-version")
         .addVersion(1, ConfigurationTransformation.builder().build())
+        .addVersion(2, ConfigurationTransformation.builder().build())
         .build();
 
     public static Config loadConfig(File configFile) throws ConfigurateException {

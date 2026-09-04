@@ -1,13 +1,20 @@
-# Requires the WS3 native ProviderHostFactory artifact. Grant is unique to this machine key.
+# A reusable provider token may register many independently keyed replicas.
 mode: provider
 provider:
   url: https://agent.warden.cloud
   profile: warden-admission-v1
   state-directory: provider-state
-  bootstrap-grant-file: bootstrap.grant
+  registration-mode: attach-instance
+  authorization: bearer-token
+  authorization-token: '' # Prefer NETHERNET_PROVIDER_TOKEN or NETHERNET_PROVIDER_TOKEN_FILE.
+  authorization-token-file: ''
+  bootstrap-grant-file: ''
   region: EU
   pool: proxy
-  label: EU proxy
+  tags:
+    location: london
+    role: game-proxy
+  label: London game proxy
   bind-address: 0.0.0.0
   udp-port: 19133
   capacity: 100

@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nethernet-proxy
+spec:
+  clusterIP: None
+  selector:
+    app: nethernet-proxy
+  ports:
+    - name: bedrock
+      port: 19132
+      protocol: UDP
+    - name: nethernet
+      port: 19133
+      protocol: UDP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nethernet-proxy
+spec:
+  serviceName: nethernet-proxy
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: nethernet-proxy
+  template:
+    metadata:
+      labels:
+        app: nethernet-proxy
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: geyser
+          image: your-registry.example/geyser-nethernet:VERSION
+          ports:
+            - name: bedrock
+              containerPort: 19132
+              protocol: UDP
+            - name: nethernet
+              containerPort: 19133
+              protocol: UDP
+          env:
+            - name: NETHERNET_SIGNALLING_MODE
+              value: provider
+            - name: NETHERNET_PROVIDER_URL
+              value: https://agent.warden.cloud
+            - name: NETHERNET_PROVIDER_PROFILE
+              value: warden-admission-v1
+            - name: NETHERNET_PROVIDER_REGISTRATION_MODE
+              value: attach-instance
+            - name: NETHERNET_PROVIDER_AUTHORIZATION
+              value: bearer-token
+            - name: NETHERNET_PROVIDER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nethernet-proxy-provider
+                  key: token
+            - name: NETHERNET_PROVIDER_REGION
+              value: EU
+            - name: NETHERNET_PROVIDER_POOL
+              value: proxy
+            - name: NETHERNET_PROVIDER_TAGS
+              value: '{"location":"london","role":"game-proxy"}'
+            - name: NETHERNET_PROVIDER_LABEL
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NETHERNET_PROVIDER_STATE_DIRECTORY
+              value: /var/lib/nethernet/provider-state
+          volumeMounts:
+            - name: provider-state
+              mountPath: /var/lib/nethernet
+  volumeClaimTemplates:
+    - metadata:
+        name: provider-state
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 128Mi

@@ -1,65 +1,102 @@
-# Provider mode
+# Provider registration
 
-Default `mode: local` preserves the existing HTTPS/local signalling lifecycle.
-`mode: provider` runs registration and control on the reusable Network
-`warden-signalling` client, off Netty event loops. The extension does not implement
-registration cryptography or admission tokens.
+Geyser now defaults to provider mode. With no extra configuration it discovers
+`https://agent.warden.cloud`, creates a fresh machine key, completes the advertised
+anonymous proof-of-work flow and logs the assigned public address plus Warden's
+optional account-claim action. An existing `mode: local` configuration remains an
+explicit opt-out.
 
-Build beside the owned NetworkCompatible checkout at the commit in
+The client is not tied to Warden discovery or account APIs. `provider.url` can be
+any HTTPS origin implementing `nethernet-provider-registration-v0` and advertising
+a compatible operational profile. Protocol, profile, operations, authorization
+schemes and limits are accepted only through same-origin discovery; redirects are
+disabled. Every registration mode still proves possession of a new P-384 machine
+key. The public protocol is documented in NetworkCompatible's
+[NetherNet provider registration v0 specification](https://github.com/teamziax/NetworkCompatible/blob/feature/http-signaling/docs/nethernet-provider-registration-v0.md).
+
+## Authorization modes
+
+`provider.registration-mode` is `automatic`, `new-service` or `attach-instance`.
+`provider.authorization` is `automatic`, `anonymous-proof-of-work`,
+`bearer-token` or `bootstrap-grant`. Automatic mode selects a legacy grant when
+configured, otherwise creates a service; automatic authorization selects bearer
+when a token is present, then grant when present, otherwise anonymous PoW.
+
+- Anonymous PoW creates a provisional service. On Warden it returns a private,
+  optional claim URL.
+- A bearer token plus `new-service` provisions directly into the provider account
+  represented by that token, without PoW.
+- A bearer token plus `attach-instance` joins an existing signalling service and
+  placement. The token is reusable across independently keyed replicas.
+- A bootstrap grant is the original one-machine attachment flow and remains
+  supported for providers that bind a short-lived grant to the machine key.
+
+Tokens are used only for the registration challenge. They are never written to
+`provider-state`, emitted by configuration `toString`, included in request JSON or
+sent to discovered lifecycle endpoints. Machine identity, assigned IDs and ticket
+keys are stored under `provider.state-directory`; give each logical replica its own
+durable directory.
+
+Configuration supports `authorization-token` and `authorization-token-file`.
+For managed environments, these provider-neutral variables override YAML:
+
+| Variable | Purpose |
+| --- | --- |
+| `NETHERNET_SIGNALLING_MODE` | `provider` or explicit `local` opt-out |
+| `NETHERNET_PROVIDER_URL` | Discovery/control origin |
+| `NETHERNET_PROVIDER_PROFILE` | Required advertised operational profile |
+| `NETHERNET_PROVIDER_REGISTRATION_MODE` | `new-service` or `attach-instance` |
+| `NETHERNET_PROVIDER_AUTHORIZATION` | PoW, bearer or bootstrap scheme |
+| `NETHERNET_PROVIDER_TOKEN` | Bearer token value |
+| `NETHERNET_PROVIDER_TOKEN_FILE` | File containing the bearer token |
+| `NETHERNET_PROVIDER_BOOTSTRAP_GRANT` | Legacy one-machine grant value |
+| `NETHERNET_PROVIDER_BOOTSTRAP_GRANT_FILE` | File containing that grant |
+| `NETHERNET_PROVIDER_REGION`, `NETHERNET_PROVIDER_POOL` | Immutable placement |
+| `NETHERNET_PROVIDER_TAGS` | JSON string object, for example `{"location":"london","role":"game-proxy"}` |
+| `NETHERNET_PROVIDER_LABEL` | Instance/service display label |
+| `NETHERNET_PROVIDER_STATE_DIRECTORY` | Durable private state path |
+| `NETHERNET_PROVIDER_BIND_ADDRESS`, `NETHERNET_PROVIDER_UDP_PORT` | Native UDP bind |
+| `NETHERNET_PROVIDER_CAPACITY` | Routing capacity, separate from player count |
+
+Environment token value takes precedence over environment token file, which takes
+precedence over YAML token value and YAML token file. The same rule applies to
+bootstrap grants. Empty values are treated as absent.
+
+## Examples
+
+- `examples/provider-local.yml`: loopback-only conformance transport.
+- `examples/provider-fleet.yml`: token-authorized London proxy placement.
+- `examples/provider-host.yml`: configuration distributed by a Minecraft host.
+- `examples/kubernetes-proxy-fleet`: StatefulSet replicas joining and draining an
+  existing proxy pool without PoW.
+- `examples/server-host`: customer servers redirected to a host's own provider,
+  with either a secret file/environment token or anonymous PoW.
+
+For Warden fleet attachment, create a signal-server-scoped service key with
+`game_server_bootstrap:write`, then delegate the exact region, pool and tag set.
+For Warden direct provisioning, use an organisation-scoped key with
+`provider_service:create`. Those scope names are Warden's mapping; another provider
+can issue its own opaque credentials while using the same wire scheme.
+
+## Lifecycle and evidence
+
+Provider startup activates the instance, installs and acknowledges ticket keys,
+publishes the host profile, sends a healthy heartbeat and then logs the public
+address. Graceful Geyser shutdown waits for provider drain before closing the native
+endpoint; a crash falls out of rotation when its signed lease expires. Persistent
+replicas recover their assigned identity rather than registering again.
+
+Automatic status uses Geyser's Bedrock query fields and actual session count.
+Capacity/load remain separate routing inputs. Panel fixed status fields remain
+authoritative. Fake transport is limited to loopback and proves only the control
+contract; it cannot accept gameplay. The native `ProviderHostFactory`, stock-client
+admission and real network reachability remain separate acceptance boundaries.
+
+Build beside the owned NetworkCompatible checkout pinned by
 `registration-network.properties`:
 
 ```sh
 bash gradlew build
-# Or use an explicit sibling location:
+# Or during coordinated development:
 bash gradlew build -PwardenNetworkPath=/absolute/path/to/NetworkCompatible
 ```
-
-CI checks out that exact Network commit and archives the extension with a full
-commit label. The jar manifest records extension and Network registration source
-revisions. This PR does not publish a release or change an installed server.
-
-`examples/provider-local.yml` is an explicit fake transport configuration for a
-loopback Warden conformance Worker. `examples/provider-fleet.yml` is the native
-fleet configuration. Put the chosen settings in the extension's `config.yml`.
-A dedicated UDP port is required; it must differ from the Geyser RakNet port.
-
-For anonymous creation, omit bootstrap grant, region and pool. The client creates
-one provisional service and logs a pending claim action; follow Warden's verified
-claim and activate only after host readiness is valid. Treat the opaque claim URL
-as private operator console output. For fleet attachment, create the persistent
-machine key first with `ProviderIdentity.initialize`, send only the public JWK to
-a controller delegated to your service and EU/proxy placement, and write its
-one-use grant into a 0600 `bootstrap.grant` file. It must match this machine key.
-Keep one private state directory per replica; restart reuses the IDs and hostname
-without another grant or human claim. Lost/revoked authority never silently creates
-a replacement public service.
-
-Automatic status uses Geyser's Bedrock query MOTD/protocol/version/max players,
-actual current Geyser sessions for players, and explicit level/game-type settings.
-All seven fields can be replaced by `setServerStatus(ServerStatus)` or
-`setServerStatusSupplier(Supplier<ServerStatus>)`. Join/disconnect/reload triggers
-coalesce, and the supplier refreshes on the heartbeat cadence. A failed query
-omits the snapshot so old status expires. Capacity/load are separate routing
-inputs; displayed maxPlayers never replaces capacity. Warden panel fixed fields
-remain authoritative and registration/reconnect never writes their settings.
-
-The native integration boundary is
-`org.geyser.extension.nethernet.provider.ProviderHostFactory`, discovered through
-ServiceLoader. WS3 owns the native implementation and service descriptor. It
-receives the existing Geyser child pipeline in `ServerBootstrap`, a dedicated UDP
-bind address and state/profile options; it returns a bound channel and
-`ProviderTransport`. Completion must mean the actual host is ready to export
-metadata. The optional stateless profile object is preserved; WS2 invents no token
-encoding or per-join delivery prerequisite. Missing native factory fails before
-enrollment; fake mode is allowed only for loopback and accepts no gameplay.
-
-Local verification covers compilation, configuration and complete status mapping.
-Reusable client tests and Warden's `scripts/provider-java-bench.mjs` cover transport
-of status, failure/coalescing, two-machine fleet enrollment, fixed overrides and
-persistent restart. A live Geyser game connection and native endpoint validation
-are separate WS3 acceptance evidence.
-
-Owned fork parent: GeyserMC/GeyserNetherNet, common base
-`83e12aa4807f3faecb57cb3b81c9d1b42be8ad1e`. Provider code uses
-`codex/registration-provider`; the shared `codex/warden-integration` branch retains
-the common base pending review. No Geyser core fork is needed by this slice.
