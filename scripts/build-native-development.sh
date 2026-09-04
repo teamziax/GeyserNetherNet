@@ -37,7 +37,9 @@ fi
     ./gradlew :warden-signalling:test :warden-signalling:nativeAdmissionTest :transport-nethernet:test
 )
 cd "$extension_root"
-bash gradlew build -PwardenNetworkPath="$integration_root/network"
+extension_revision=$(git rev-parse HEAD)
+if [[ -n "$(git status --porcelain)" ]]; then extension_revision+="-dirty"; fi
+bash gradlew build -PwardenNetworkPath="$integration_root/network" -PregistrationRevision="$extension_revision"
 python3 - "$extension_root" "$native_revision" "$provider_revision" <<'PY'
 import pathlib, sys, zipfile
 root, native, provider = sys.argv[1:]
