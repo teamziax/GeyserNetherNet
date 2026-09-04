@@ -4,8 +4,9 @@ rootProject.name = "GeyserNetherNet"
 // publishing it to Maven Local. Dependency substitution maps the coordinates declared in
 // build.gradle.kts (dev.kastle.netty:netty-transport-nethernet) onto the local :transport-nethernet
 // project, so the version and published artifactId don't have to match anything real.
-includeBuild("../NetworkCompatible") {
+includeBuild(providers.gradleProperty("wardenNetworkPath").getOrElse("../NetworkCompatible")) {
     dependencySubstitution {
+        substitute(module("dev.kastle.netty:netty-warden-signalling")).using(project(":warden-signalling"))
         substitute(module("dev.kastle.netty:netty-transport-nethernet"))
             .using(project(":transport-nethernet"))
     }

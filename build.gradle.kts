@@ -38,11 +38,16 @@ repositories {
 }
 
 dependencies {
+    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.geysermc.geyser:core:$geyserVersion-SNAPSHOT")
     // Geyser API - needed for all extensions
     compileOnly("org.geysermc.geyser:api:$geyserVersion-SNAPSHOT")
 
     // Geyser Core - we use things not exposed in the API
     compileOnly("org.geysermc.geyser:core:$geyserVersion-SNAPSHOT")
+
+    implementation("dev.kastle.netty:netty-warden-signalling:0.1.0-registration-dev")
 
     // The NetherNet Netty transport
     implementation("dev.kastle.netty:netty-transport-nethernet:$netherNetVersion")
@@ -78,6 +83,8 @@ afterEvaluate {
     }
 }
 
+tasks.test { useJUnitPlatform() }
+
 tasks {
     // This automatically fills in the extension.yml file.
     processResources {
@@ -97,6 +104,10 @@ tasks {
     }
 
     shadowJar {
+        filesMatching("META-INF/services/**") { duplicatesStrategy = DuplicatesStrategy.INCLUDE }
+        mergeServiceFiles()
+        manifest.attributes["Registration-Revision"] = providers.gradleProperty("registrationRevision").getOrElse("local-development")
+        manifest.attributes["Registration-Network-Revision"] = "12d62eaf993b69d4370bb65b3ba39a0fd132852a"
         dependencies {
             // Exclude netty apart from the http codec
             exclude {

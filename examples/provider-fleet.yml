@@ -1,0 +1,16 @@
+# Requires the WS3 native ProviderHostFactory artifact. Grant is unique to this machine key.
+mode: provider
+provider:
+  url: https://agent.warden.cloud
+  profile: warden-admission-v1
+  state-directory: provider-state
+  bootstrap-grant-file: bootstrap.grant
+  region: EU
+  pool: proxy
+  label: EU proxy
+  bind-address: 0.0.0.0
+  udp-port: 19133
+  capacity: 100
+  level: world
+  game-type: 0
+  fake-transport: false
