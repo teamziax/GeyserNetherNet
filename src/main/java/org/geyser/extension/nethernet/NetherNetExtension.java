@@ -47,6 +47,7 @@ public class NetherNetExtension implements Extension {
     private final Object providerLifecycle = new Object();
     private volatile boolean stopping;
     private volatile ProviderClient providerClient;
+    private final GameOutcomeReporter gameOutcomes = new GameOutcomeReporter();
     private volatile Supplier<ServerStatus> providerStatusSupplier = this::collectServerStatus;
 
     private EventLoopGroup eventLoopGroup;
@@ -141,13 +142,14 @@ public class NetherNetExtension implements Extension {
                 } else {
                     ProviderHostFactory factory = ServiceLoader.load(ProviderHostFactory.class, getClass().getClassLoader()).findFirst().orElseThrow(() -> new IOException("Native provider host factory is unavailable; readiness cannot start"));
                     eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
-                    ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance()));
+                    ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance(), gameOutcomes));
                     ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(settings.bindAddress(), settings.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", settings.profile())).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
                     netherNetChannel = host.channel(); transport = host.transport();
                     if (stopping) { transport.close(); netherNetChannel.close(); eventLoopGroup.shutdownGracefully(); return; }
                 }
                 String grant = settings.bootstrapGrantFile().isEmpty() ? null : Files.readString(dataFolder().resolve(settings.bootstrapGrantFile())).trim();
                 store = new ProviderStateStore(statePath);
+                transport = new GameOutcomeTransport(transport, gameOutcomes);
                 ProviderClient client = new ProviderClient(new ProviderClient.Configuration(origin, settings.profile(), settings.label(), grant, settings.region().isEmpty() ? null : settings.region(), settings.pool().isEmpty() ? null : settings.pool()), store, transport,
                     () -> providerStatusSupplier.get(), () -> new ProviderClient.Health(true, config.provider().capacity(), Math.min(1, (double) GeyserImpl.getInstance().getSessionManager().size() / Math.max(1, config.provider().capacity())), "nethernet", description().version()), message -> logger().warning(message));
                 store = null; // ProviderClient now owns its lifetime.
@@ -206,6 +208,7 @@ public class NetherNetExtension implements Extension {
                     source.sendMessage(new Gson().toJson(Map.of("nativeCreationAttempts", nativeChannel.creationAttempts(),
                         "admission", nativeChannel.admissionStats(), "native", nativeChannel.nativeStats(), "bind", nativeChannel.localAddress().toString())));
                 }
+                source.sendMessage(new Gson().toJson(Map.of("droppedGameOutcomeEvents", gameOutcomes.droppedEvents())));
                 client.readiness().whenComplete((ready, failure) -> source.sendMessage(failure == null ? ready.toString() : providerFailure(failure)));
             }).build());
     }
@@ -214,7 +217,13 @@ public class NetherNetExtension implements Extension {
         return failure instanceof ProviderClient.ProviderException ? failure.getMessage() : failure.getClass().getSimpleName();
     }
     private void refreshProviderStatus() { ProviderClient client = providerClient; if (client != null) client.requestStatusRefresh(); }
-    @Subscribe public void onSessionJoin(SessionJoinEvent event) { refreshProviderStatus(); }
+    @Subscribe public void onSessionJoin(SessionJoinEvent event) {
+        if (event.connection() instanceof org.geysermc.geyser.session.GeyserSession session
+                && !session.getUpstream().getSession().isSubClient()) {
+            gameOutcomes.joined(session.getUpstream().getSession().getPeer().getChannel());
+        }
+        refreshProviderStatus();
+    }
     @Subscribe public void onSessionDisconnect(SessionDisconnectEvent event) { refreshProviderStatus(); }
     @Subscribe public void onPostReload(GeyserPostReloadEvent event) {
         try { config = ConfigLoader.loadConfig(dataFolder().resolve("config.yml").toFile()); refreshProviderStatus(); }
