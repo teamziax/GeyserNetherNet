@@ -3,6 +3,11 @@ This is a Geyser extension that adds support for the NetherNet protocol via HTTP
 
 This is a work in progress and is not yet ready for production use. Requires [NetworkCompatible 1.8.0+](https://github.com/rtm516/NetworkCompatible) for HTTP signaling support.
 
+## Provider game admission reporting
+In provider mode, native ticket events establish transport progress. The extension additionally reports `ticket.game_rejected` when Geyser sends a Bedrock disconnect before play-ready admission, and `ticket.game_joined` on Geyser's primary-session `SessionJoinEvent`. An unsupported network protocol reports `unsupported_version`; other explicit rejections report `server_rejected`. Client closes and disconnects after joining are not game rejections.
+
+These events use the existing signed provider ticket-event batches and the channel's authenticated ticket ID. No disconnect text or player identity is included. Reporting retains only channel-owned flags and a bounded 256-event queue, with drops visible in `nethernet diagnostics`. Deploy Warden's additive game-admission event contract first. Existing historical transport events remain usable, but earlier game rejections were not reported.
+
 ## Setup
 1. Start Geyser once with the extension enabled. On first start it generates `config.yml` in the extension's data folder, then stop Geyser. (The listener will fail to start until the keystores below are in place, that's expected on this first run.)
 2. Place your HTTPS keystore file (`https.p12`) and identity keystore file (`identity.p12`) in the extension's data folder.
