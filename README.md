@@ -17,7 +17,9 @@ require control-plane configuration, after this initial provider upgrade.
 
 Local player/status changes wake reporting without waiting for the idle timer.
 Unchanged local observations do not send requests, and background control polling
-backs off with the heartbeat. Shutdown still attempts a drain notification. Hosts
+backs off with the heartbeat. A JVM shutdown hook gives the asynchronous provider
+up to 20 seconds to finish its drain notification on normal process termination,
+including SIGTERM. Extension shutdown itself remains asynchronous. Hosts
 learn a changed policy on their next report; they cannot receive a revised schedule
 while silent. Older control planes retain the legacy cadence. Deploy Warden's
 deadline-aware routing and migration before this extension.
