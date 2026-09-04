@@ -4,6 +4,10 @@ provider:
   url: http://127.0.0.1:8787
   profile: warden-admission-v1
   state-directory: provider-state
+  registration-mode: new-service
+  authorization: anonymous-proof-of-work
+  authorization-token: ''
+  authorization-token-file: ''
   bootstrap-grant-file: ''
   region: ''
   pool: ''

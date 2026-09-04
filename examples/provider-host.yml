@@ -1,0 +1,23 @@
+# A server host can distribute this template and inject only provider URL/token.
+mode: provider
+provider:
+  url: https://signal.host.example
+  profile: warden-admission-v1
+  state-directory: provider-state
+  registration-mode: new-service
+  authorization: automatic
+  authorization-token: '' # Or set a per-customer secret here.
+  authorization-token-file: ''
+  bootstrap-grant-file: ''
+  region: EU
+  pool: customers
+  tags:
+    product: minecraft
+    plan: standard
+  label: Hosted Geyser server
+  bind-address: 0.0.0.0
+  udp-port: 19133
+  capacity: 100
+  level: world
+  game-type: 0
+  fake-transport: false

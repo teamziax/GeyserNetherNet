@@ -3,6 +3,14 @@ This is a Geyser extension that adds support for the NetherNet protocol via HTTP
 
 This is a work in progress and is not yet ready for production use. Requires [NetworkCompatible 1.8.0+](https://github.com/rtm516/NetworkCompatible) for HTTP signaling support.
 
+## Provider quick start
+
+Start Geyser with the extension and no extra NetherNet configuration. The generated
+defaults register with Warden using proof of work and the log prints the assigned
+public address. Set `NETHERNET_PROVIDER_URL` to use another compatible signalling
+provider; bearer-token, server-host and Kubernetes fleet examples are documented
+in [PROVIDER.md](PROVIDER.md).
+
 ## Provider game admission reporting
 In provider mode, native ticket events establish transport progress. The extension additionally reports `ticket.game_rejected` when Geyser sends a Bedrock disconnect before play-ready admission, and `ticket.game_joined` on Geyser's primary-session `SessionJoinEvent`. An unsupported network protocol reports `unsupported_version`; other explicit rejections report `server_rejected`. Client closes and disconnects after joining are not game rejections.
 
@@ -24,7 +32,11 @@ learn a changed policy on their next report; they cannot receive a revised sched
 while silent. Older control planes retain the legacy cadence. Deploy Warden's
 deadline-aware routing and migration before this extension.
 
-## Setup
+## Local-signalling setup
+
+Set `mode: local` before following these steps. Local mode owns its HTTPS signalling
+and identity certificates; provider mode does not use these keystores.
+
 1. Start Geyser once with the extension enabled. On first start it generates `config.yml` in the extension's data folder, then stop Geyser. (The listener will fail to start until the keystores below are in place, that's expected on this first run.)
 2. Place your HTTPS keystore file (`https.p12`) and identity keystore file (`identity.p12`) in the extension's data folder.
 3. Edit `config.yml` to set the correct paths and passwords for your keystore files.

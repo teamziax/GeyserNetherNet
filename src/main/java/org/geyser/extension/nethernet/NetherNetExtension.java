@@ -24,7 +24,6 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.nio.file.Files;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.CompletableFuture;
@@ -79,10 +78,11 @@ public class NetherNetExtension implements Extension {
             return;
         }
 
-        if (!config.mode().equals("local") && !config.mode().equals("provider")) {
+        String signallingMode = System.getenv().getOrDefault("NETHERNET_SIGNALLING_MODE", config.mode());
+        if (!signallingMode.equals("local") && !signallingMode.equals("provider")) {
             logger().error("Unknown signalling mode; choose local or provider."); disable(); return;
         }
-        if (config.mode().equals("provider")) { startProvider(); return; }
+        if (signallingMode.equals("provider")) { startProvider(); return; }
 
         // Keep libdatachannel's own logging out of the way
         NetherNetLogging.setNativeLogLevel("WARN");
@@ -132,9 +132,11 @@ public class NetherNetExtension implements Extension {
         CompletableFuture.runAsync(() -> {
             ProviderStateStore store = null;
             try {
-                Config.ProviderConfig settings = config.provider(); URI origin = URI.create(settings.url());
-                if (settings.udpPort() < 1 || settings.udpPort() > 65535 || settings.udpPort() == geyserApi().bedrockListener().port()) throw new IOException("Configure a separate NetherNet UDP port");
-                var statePath = dataFolder().resolve(settings.stateDirectory());
+                Config.ProviderConfig settings = config.provider();
+                ProviderRuntimeConfiguration runtime = ProviderRuntimeConfiguration.resolve(config, dataFolder(), System.getenv());
+                URI origin = runtime.origin();
+                if (runtime.udpPort() < 1 || runtime.udpPort() > 65535 || runtime.udpPort() == geyserApi().bedrockListener().port()) throw new IOException("Configure a separate NetherNet UDP port");
+                var statePath = runtime.stateDirectory();
                 ProviderTransport transport;
                 if (stopping) return;
                 if (settings.fakeTransport()) {
@@ -144,15 +146,14 @@ public class NetherNetExtension implements Extension {
                     ProviderHostFactory factory = ServiceLoader.load(ProviderHostFactory.class, getClass().getClassLoader()).findFirst().orElseThrow(() -> new IOException("Native provider host factory is unavailable; readiness cannot start"));
                     eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
                     ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance(), gameOutcomes));
-                    ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(settings.bindAddress(), settings.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", settings.profile())).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
+                    ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(runtime.bindAddress(), runtime.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", runtime.profile())).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
                     netherNetChannel = host.channel(); transport = host.transport();
                     if (stopping) { transport.close(); netherNetChannel.close(); eventLoopGroup.shutdownGracefully(); return; }
                 }
-                String grant = settings.bootstrapGrantFile().isEmpty() ? null : Files.readString(dataFolder().resolve(settings.bootstrapGrantFile())).trim();
                 store = new ProviderStateStore(statePath);
                 transport = new GameOutcomeTransport(transport, gameOutcomes);
-                ProviderClient client = new ProviderClient(new ProviderClient.Configuration(origin, settings.profile(), settings.label(), grant, settings.region().isEmpty() ? null : settings.region(), settings.pool().isEmpty() ? null : settings.pool()), store, transport,
-                    () -> providerStatusSupplier.get(), () -> new ProviderClient.Health(true, config.provider().capacity(), Math.min(1, (double) GeyserImpl.getInstance().getSessionManager().size() / Math.max(1, config.provider().capacity())), "nethernet", description().version()), message -> logger().warning(message));
+                ProviderClient client = new ProviderClient(runtime.clientConfiguration(), store, transport,
+                    () -> providerStatusSupplier.get(), () -> new ProviderClient.Health(true, runtime.capacity(), Math.min(1, (double) GeyserImpl.getInstance().getSessionManager().size() / Math.max(1, runtime.capacity())), "nethernet", description().version()), message -> logger().warning(message));
                 store = null; // ProviderClient now owns its lifetime.
                 synchronized (providerLifecycle) {
                     if (stopping) { client.close(); return; }
@@ -162,7 +163,7 @@ public class NetherNetExtension implements Extension {
                 }
                 client.start().whenComplete((registration, failure) -> {
                     if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); shutdown(); return; }
-                    logger().info("Provider instance registered: " + registration.get("instanceId").getAsString());
+                    logger().info("Provider address: " + registration.get("publicAddress").getAsString() + " (instance " + registration.get("instanceId").getAsString() + ")");
                     if (registration.has("pendingAction")) logger().info(registration.getAsJsonObject("pendingAction").get("text").getAsString() + " " + registration.getAsJsonObject("pendingAction").get("url").getAsString());
                 });
             } catch (Exception e) {

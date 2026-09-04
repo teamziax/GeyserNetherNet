@@ -4,11 +4,12 @@ import org.spongepowered.configurate.interfaces.meta.defaults.DefaultBoolean;
 import org.spongepowered.configurate.interfaces.meta.defaults.DefaultString;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
+import java.util.Map;
 
 @ConfigSerializable
 public interface Config {
     @Comment("Signalling mode: local or provider")
-    @DefaultString("local")
+    @DefaultString("provider")
     String mode();
 
     @Comment("Provider registration and instance storage")
@@ -19,10 +20,19 @@ public interface Config {
         @DefaultString("https://agent.warden.cloud") String url();
         @DefaultString("warden-admission-v1") String profile();
         @DefaultString("provider-state") String stateDirectory();
-        @Comment("Path to one machine's bootstrap grant file; empty creates a new provisional service")
+        @Comment("Registration mode: automatic, new-service or attach-instance")
+        @DefaultString("automatic") String registrationMode();
+        @Comment("Authorization: automatic, anonymous-proof-of-work, bearer-token or bootstrap-grant")
+        @DefaultString("automatic") String authorization();
+        @Comment("Provider bearer token. Prefer NETHERNET_PROVIDER_TOKEN or a token file for hosted deployments")
+        @DefaultString("") String authorizationToken();
+        @DefaultString("") String authorizationTokenFile();
+        @Comment("Legacy one-machine grant file; automatic mode treats this as attach-instance")
         @DefaultString("") String bootstrapGrantFile();
         @DefaultString("") String region();
         @DefaultString("") String pool();
+        @Comment("Provider-defined immutable routing tags")
+        default Map<String, String> tags() { return Map.of(); }
         @DefaultString("Geyser") String label();
         @Comment("Separate UDP endpoint from the RakNet listener")
         @DefaultString("0.0.0.0") String bindAddress();
@@ -72,6 +82,6 @@ public interface Config {
     @Comment("Do not change!")
     @SuppressWarnings("unused")
     default int configVersion() {
-        return 1;
+        return 2;
     }
 }
