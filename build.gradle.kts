@@ -1,5 +1,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.gradle.kotlin.dsl.named
+import java.util.Properties
 
 plugins {
     java
@@ -12,6 +13,10 @@ relocate("com.google.gson")
 
 // Experimental native admission currently has a tested Linux x86_64 development classifier.
 val nativePlatforms = listOf("x86_64")
+
+val networkPin = Properties().apply {
+    file("registration-network.properties").inputStream().use { load(it) }
+}.getProperty("commit")
 
 val id = project.property("id") as String
 val extensionName = project.property("name") as String
@@ -103,8 +108,8 @@ tasks {
         filesMatching("META-INF/services/**") { duplicatesStrategy = DuplicatesStrategy.INCLUDE }
         mergeServiceFiles()
         manifest.attributes["Registration-Revision"] = providers.gradleProperty("registrationRevision").getOrElse("local-development")
-        manifest.attributes["Registration-Network-Revision"] = "a9b163bc5914b44399381aedbc473e16e3ce17e5"
-        manifest.attributes["Native-Network-Revision"] = "3c346c681396e0d7743467ac816a798f331dfb71"
+        manifest.attributes["Registration-Network-Revision"] = networkPin
+        manifest.attributes["Native-Network-Revision"] = networkPin
         manifest.attributes["Native-JNI-Revision"] = "5544964002162d184bacfcd0cb8d70d86ec3f271"
         dependencies {
             // Exclude netty apart from the http codec
