@@ -25,7 +25,7 @@ val version = project.version as String
 
 val geyserVersion = "2.11.0"
 val netherNetVersion = "1.8.0"
-val libdatachannelVersion = "0.24.1.1-warden.66014e14cb626055bbae3d338e9902bdbb9128cd"
+val libdatachannelVersion = "0.24.1.1-warden.40f2c329dcb63a762a701b987dc9995d76fd18c7"
 
 val configurateVersion = "4.2.0-GeyserMC-20251111.004649-11"
 
@@ -110,7 +110,7 @@ tasks {
         manifest.attributes["Registration-Revision"] = providers.gradleProperty("registrationRevision").getOrElse("local-development")
         manifest.attributes["Registration-Network-Revision"] = networkPin
         manifest.attributes["Native-Network-Revision"] = networkPin
-        manifest.attributes["Native-JNI-Revision"] = "66014e14cb626055bbae3d338e9902bdbb9128cd"
+        manifest.attributes["Native-JNI-Revision"] = "40f2c329dcb63a762a701b987dc9995d76fd18c7"
         dependencies {
             // Exclude netty apart from the http codec
             exclude {
