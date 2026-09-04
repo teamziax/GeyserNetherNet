@@ -8,6 +8,20 @@ In provider mode, native ticket events establish transport progress. The extensi
 
 These events use the existing signed provider ticket-event batches and the channel's authenticated ticket ID. No disconnect text or player identity is included. Reporting retains only channel-owned flags and a bounded 256-event queue, with drops visible in `nethernet diagnostics`. Deploy Warden's additive game-admission event contract first. Existing historical transport events remain usable, but earlier game rejections were not reported.
 
+## Provider check-in scheduling
+
+With a compatible Warden control plane, the native provider follows the schedule
+returned on each heartbeat. Warden currently chooses approximately one minute for
+active instances and 15–60 minutes for idle instances. Future timing changes only
+require control-plane configuration, after this initial provider upgrade.
+
+Local player/status changes wake reporting without waiting for the idle timer.
+Unchanged local observations do not send requests, and background control polling
+backs off with the heartbeat. Shutdown still attempts a drain notification. Hosts
+learn a changed policy on their next report; they cannot receive a revised schedule
+while silent. Older control planes retain the legacy cadence. Deploy Warden's
+deadline-aware routing and migration before this extension.
+
 ## Setup
 1. Start Geyser once with the extension enabled. On first start it generates `config.yml` in the extension's data folder, then stop Geyser. (The listener will fail to start until the keystores below are in place, that's expected on this first run.)
 2. Place your HTTPS keystore file (`https.p12`) and identity keystore file (`identity.p12`) in the extension's data folder.
