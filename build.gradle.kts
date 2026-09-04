@@ -1,5 +1,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.gradle.kotlin.dsl.named
+import java.util.Properties
 
 plugins {
     java
@@ -10,13 +11,12 @@ relocate("org.yaml.snakeyaml")
 relocate("org.spongepowered.configurate")
 relocate("com.google.gson")
 
-val nativePlatforms = listOf(
-    "windows-x86_64",
-    "x86_64",
-    "aarch64",
-    "macos-x86_64",
-    "macos-arm64"
-)
+// Experimental native admission currently has a tested Linux x86_64 development classifier.
+val nativePlatforms = listOf("x86_64")
+
+val networkPin = Properties().apply {
+    file("registration-network.properties").inputStream().use { load(it) }
+}.getProperty("commit")
 
 val id = project.property("id") as String
 val extensionName = project.property("name") as String
@@ -25,11 +25,12 @@ val version = project.version as String
 
 val geyserVersion = "2.11.0"
 val netherNetVersion = "1.8.0"
-val libdatachannelVersion = "0.24.1.1"
+val libdatachannelVersion = "0.24.1.1-warden.5544964002162d184bacfcd0cb8d70d86ec3f271"
 
 val configurateVersion = "4.2.0-GeyserMC-20251111.004649-11"
 
 repositories {
+    mavenLocal { content { includeGroup("dev.ziax.warden") } }
     // Repo for the Geyser API artifact
     maven("https://repo.opencollab.dev/main/")
 
@@ -53,9 +54,9 @@ dependencies {
     implementation("dev.kastle.netty:netty-transport-nethernet:$netherNetVersion")
 
     // The WebRTC library and its natives
-    implementation("tel.schich:libdatachannel-java:$libdatachannelVersion")
+    implementation("dev.ziax.warden:libdatachannel-java:$libdatachannelVersion")
     nativePlatforms.forEach { platform ->
-        runtimeOnly("tel.schich:libdatachannel-java:$libdatachannelVersion:$platform")
+        runtimeOnly("dev.ziax.warden:libdatachannel-java:$libdatachannelVersion:$platform")
     }
 
     // Configurate
@@ -107,7 +108,9 @@ tasks {
         filesMatching("META-INF/services/**") { duplicatesStrategy = DuplicatesStrategy.INCLUDE }
         mergeServiceFiles()
         manifest.attributes["Registration-Revision"] = providers.gradleProperty("registrationRevision").getOrElse("local-development")
-        manifest.attributes["Registration-Network-Revision"] = "a9b163bc5914b44399381aedbc473e16e3ce17e5"
+        manifest.attributes["Registration-Network-Revision"] = networkPin
+        manifest.attributes["Native-Network-Revision"] = networkPin
+        manifest.attributes["Native-JNI-Revision"] = "5544964002162d184bacfcd0cb8d70d86ec3f271"
         dependencies {
             // Exclude netty apart from the http codec
             exclude {

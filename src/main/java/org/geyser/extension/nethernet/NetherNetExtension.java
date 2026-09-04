@@ -34,6 +34,11 @@ import org.geyser.extension.nethernet.provider.*;
 import org.geysermc.geyser.api.event.bedrock.SessionJoinEvent;
 import org.geysermc.geyser.api.event.bedrock.SessionDisconnectEvent;
 import org.geysermc.geyser.api.event.lifecycle.GeyserPostReloadEvent;
+import org.geysermc.geyser.api.event.lifecycle.GeyserDefineCommandsEvent;
+import org.geysermc.geyser.api.command.Command;
+import org.geysermc.geyser.api.command.CommandSource;
+import com.google.gson.Gson;
+import dev.kastle.netty.channel.nethernet.admission.NativeAdmissionServerChannel;
 
 public class NetherNetExtension implements Extension {
     private static final Channel PING_CHANNEL = new DummyPingChannel();
@@ -151,7 +156,7 @@ public class NetherNetExtension implements Extension {
                     providerClient = client;
                 }
                 client.start().whenComplete((registration, failure) -> {
-                    if (failure != null) { logger().error("Provider startup failed: " + failure.getClass().getSimpleName()); client.close(); return; }
+                    if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); client.close(); return; }
                     logger().info("Provider instance registered: " + registration.get("instanceId").getAsString());
                     if (registration.has("pendingAction")) logger().info(registration.getAsJsonObject("pendingAction").get("text").getAsString() + " " + registration.getAsJsonObject("pendingAction").get("url").getAsString());
                 });
@@ -172,6 +177,42 @@ public class NetherNetExtension implements Extension {
     /** Programmatic complete status override; panel fixed values still take precedence at the provider. */
     public void setServerStatus(ServerStatus snapshot) { providerStatusSupplier = () -> snapshot; refreshProviderStatus(); }
     public void setServerStatusSupplier(Supplier<ServerStatus> supplier) { providerStatusSupplier = java.util.Objects.requireNonNull(supplier); refreshProviderStatus(); }
+    public void restoreAutomaticServerStatus() { providerStatusSupplier = this::collectServerStatus; refreshProviderStatus(); }
+
+    /** Local console operations use the same typed public status API as other extensions. */
+    @Subscribe public void onDefineCommands(GeyserDefineCommandsEvent event) {
+        event.register(Command.<CommandSource>builder(this).source(CommandSource.class).name("status")
+            .description("Inspect or update the provider's automatic status report")
+            .permission("nethernet.console").suggestedOpOnly(true).executableOnConsole(true)
+            .executor((source, command, args) -> {
+                if (!source.isConsole()) { source.sendMessage("This operation requires the server console."); return; }
+                try {
+                    if (args.length == 0) source.sendMessage(new Gson().toJson(providerStatusSupplier.get()));
+                    else if (args.length == 1 && args[0].equals("automatic")) { restoreAutomaticServerStatus(); source.sendMessage("Automatic Geyser status restored."); }
+                    else if (args.length == 2 && args[0].equals("set") && args[1].length() <= 4096) {
+                        String json = new String(java.util.Base64.getUrlDecoder().decode(args[1]), java.nio.charset.StandardCharsets.UTF_8);
+                        setServerStatus(new Gson().fromJson(json, ServerStatus.class)); source.sendMessage("Complete provider status queued.");
+                    } else source.sendMessage("Usage: nethernet status [automatic | set <base64url JSON snapshot>]");
+                } catch (RuntimeException invalid) { source.sendMessage("Invalid complete server status snapshot."); }
+            }).build());
+        event.register(Command.<CommandSource>builder(this).source(CommandSource.class).name("diagnostics")
+            .description("Inspect native allocation counters and signed provider readiness")
+            .permission("nethernet.console").suggestedOpOnly(true).executableOnConsole(true)
+            .executor((source, command, args) -> {
+                if (!source.isConsole()) { source.sendMessage("This operation requires the server console."); return; }
+                ProviderClient client = providerClient;
+                if (client == null) { source.sendMessage("Provider is not running."); return; }
+                if (netherNetChannel instanceof NativeAdmissionServerChannel nativeChannel && nativeChannel.isActive()) {
+                    source.sendMessage(new Gson().toJson(Map.of("nativeCreationAttempts", nativeChannel.creationAttempts(),
+                        "admission", nativeChannel.admissionStats(), "native", nativeChannel.nativeStats(), "bind", nativeChannel.localAddress().toString())));
+                }
+                client.readiness().whenComplete((ready, failure) -> source.sendMessage(failure == null ? ready.toString() : providerFailure(failure)));
+            }).build());
+    }
+    private static String providerFailure(Throwable failure) {
+        while (failure.getCause() != null && (failure instanceof java.util.concurrent.CompletionException || failure instanceof java.util.concurrent.ExecutionException)) failure = failure.getCause();
+        return failure instanceof ProviderClient.ProviderException ? failure.getMessage() : failure.getClass().getSimpleName();
+    }
     private void refreshProviderStatus() { ProviderClient client = providerClient; if (client != null) client.requestStatusRefresh(); }
     @Subscribe public void onSessionJoin(SessionJoinEvent event) { refreshProviderStatus(); }
     @Subscribe public void onSessionDisconnect(SessionDisconnectEvent event) { refreshProviderStatus(); }
