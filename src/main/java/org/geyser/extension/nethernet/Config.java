@@ -22,13 +22,11 @@ public interface Config {
         @DefaultString("provider-state") String stateDirectory();
         @Comment("Registration mode: automatic, new-service or attach-instance")
         @DefaultString("automatic") String registrationMode();
-        @Comment("Authorization: automatic, anonymous-proof-of-work, bearer-token or bootstrap-grant")
+        @Comment("Authorization: automatic, anonymous-proof-of-work or bearer-token")
         @DefaultString("automatic") String authorization();
         @Comment("Provider bearer token. Prefer NETHERNET_PROVIDER_TOKEN or a token file for hosted deployments")
         @DefaultString("") String authorizationToken();
         @DefaultString("") String authorizationTokenFile();
-        @Comment("Legacy one-machine grant file; automatic mode treats this as attach-instance")
-        @DefaultString("") String bootstrapGrantFile();
         @DefaultString("") String region();
         @DefaultString("") String pool();
         @Comment("Provider-defined immutable routing tags")
@@ -82,6 +80,6 @@ public interface Config {
     @Comment("Do not change!")
     @SuppressWarnings("unused")
     default int configVersion() {
-        return 2;
+        return 3;
     }
 }

@@ -8,7 +8,6 @@ provider:
   authorization: bearer-token
   authorization-token: '' # Prefer NETHERNET_PROVIDER_TOKEN or NETHERNET_PROVIDER_TOKEN_FILE.
   authorization-token-file: ''
-  bootstrap-grant-file: ''
   region: EU
   pool: proxy
   tags:
