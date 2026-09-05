@@ -1,0 +1,24 @@
+# A reusable provider token may register many independently keyed replicas.
+mode: provider
+provider:
+  url: https://agent.warden.cloud
+  profile: nxs-admission-v1
+  state-directory: provider-state
+  registration-mode: attach-instance
+  authorization: bearer-token
+  authorization-token: '' # Prefer NETHERNET_PROVIDER_TOKEN or NETHERNET_PROVIDER_TOKEN_FILE.
+  authorization-token-file: ''
+  region: EU
+  pool: proxy
+  tags:
+    location: london
+    role: game-proxy
+  label: London game proxy
+  bind-address: 0.0.0.0
+  advertised-address: '' # Set the address reachable by clients on NAT/multihomed hosts.
+  advertised-port: 0 # Reuse udp-port; set a forwarded public port if different.
+  udp-port: 19133
+  capacity: 100
+  level: world
+  game-type: 0
+  fake-transport: false

@@ -2,6 +2,7 @@ package org.geyser.extension.nethernet;
 
 import org.spongepowered.configurate.CommentedConfigurationNode;
 import org.spongepowered.configurate.ConfigurateException;
+import org.spongepowered.configurate.NodePath;
 import org.spongepowered.configurate.interfaces.InterfaceDefaultOptions;
 import org.spongepowered.configurate.transformation.ConfigurationTransformation;
 import org.spongepowered.configurate.yaml.NodeStyle;
@@ -13,6 +14,12 @@ public class ConfigLoader {
     private static final ConfigurationTransformation.Versioned TRANSFORMER = ConfigurationTransformation.versionedBuilder()
         .versionKey("config-version")
         .addVersion(1, ConfigurationTransformation.builder().build())
+        .addVersion(2, ConfigurationTransformation.builder().build())
+        .addVersion(4, ConfigurationTransformation.builder()
+            .addAction(NodePath.path("provider", "profile"), (path, node) -> {
+                if ("warden-admission-v1".equals(node.getString())) node.set("nxs-admission-v1");
+                return null;
+            }).build())
         .build();
 
     public static Config loadConfig(File configFile) throws ConfigurateException {
@@ -31,8 +38,12 @@ public class ConfigLoader {
         CommentedConfigurationNode newRoot = CommentedConfigurationNode.root(loader.defaultOptions());
         newRoot.set(config);
 
-        if (originallyEmpty || currentVersion != newVersion) {
+        if (originallyEmpty) {
             loader.save(newRoot);
+        } else if (currentVersion != newVersion) {
+            // Preserve operator fields unknown to this version while filling new defaults.
+            node.mergeFrom(newRoot);
+            loader.save(node);
         }
 
         return config;
