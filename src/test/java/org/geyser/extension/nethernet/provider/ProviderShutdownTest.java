@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -15,6 +16,34 @@ class ProviderShutdownTest {
 
     @Test void finishesDaemonDrainWhenTheProcessReceivesSigterm() throws Exception { runChild("signal"); }
     @Test void finishesDrainAlreadyStartedByExtensionShutdown() throws Exception { runChild("exit"); }
+
+    @Test void leavesEndpointAliveUntilDrainCompletesAndCleansExactlyOnce() {
+        CompletableFuture<Void> drain = new CompletableFuture<>();
+        AtomicInteger stops = new AtomicInteger(), cleanups = new AtomicInteger();
+        ProviderShutdown shutdown = new ProviderShutdown(() -> {
+            stops.incrementAndGet();
+            return drain;
+        }, cleanups::incrementAndGet, ignored -> {});
+        try {
+            shutdown.close();
+            shutdown.close();
+            assertEquals(1, stops.get());
+            assertEquals(0, cleanups.get(), "Endpoint/event loop must remain available during signed drain");
+            drain.complete(null);
+            shutdown.close();
+            assertEquals(1, cleanups.get());
+        } finally { drain.complete(null); }
+    }
+
+    @Test void failedDrainStillReleasesEndpointResources() {
+        CompletableFuture<Void> drain = new CompletableFuture<>();
+        AtomicInteger cleanups = new AtomicInteger();
+        ProviderShutdown shutdown = new ProviderShutdown(() -> drain, cleanups::incrementAndGet, ignored -> {});
+        shutdown.close();
+        assertEquals(0, cleanups.get());
+        drain.completeExceptionally(new java.io.IOException("Control plane unavailable"));
+        assertEquals(1, cleanups.get());
+    }
 
     private void runChild(String mode) throws Exception {
         Path marker = directory.resolve(mode);

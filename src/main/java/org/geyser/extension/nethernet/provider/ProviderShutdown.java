@@ -10,12 +10,18 @@ import java.util.function.Supplier;
 /** Keeps the JVM alive briefly while the provider sends its best-effort drain. */
 public final class ProviderShutdown implements AutoCloseable {
     private final Supplier<? extends CompletionStage<Void>> stop;
+    private final Runnable cleanup;
     private final CompletableFuture<Void> stopped = new CompletableFuture<>();
     private final AtomicBoolean requested = new AtomicBoolean();
     private final Thread hook;
 
     public ProviderShutdown(Supplier<? extends CompletionStage<Void>> stop, Consumer<String> diagnostics) {
+        this(stop, () -> {}, diagnostics);
+    }
+
+    public ProviderShutdown(Supplier<? extends CompletionStage<Void>> stop, Runnable cleanup, Consumer<String> diagnostics) {
         this.stop = stop;
+        this.cleanup = cleanup;
         hook = new Thread(() -> {
             close();
             try { stopped.get(20, TimeUnit.SECONDS); }
@@ -33,6 +39,12 @@ public final class ProviderShutdown implements AutoCloseable {
     }
 
     private void finish(Throwable failure) {
+        // The transport's signed drain owns the endpoint until stop completes.
+        try { cleanup.run(); }
+        catch (RuntimeException cleanupFailure) {
+            if (failure == null) failure = cleanupFailure;
+            else failure.addSuppressed(cleanupFailure);
+        }
         if (failure == null) stopped.complete(null);
         else stopped.completeExceptionally(failure);
         try { Runtime.getRuntime().removeShutdownHook(hook); }

@@ -163,7 +163,7 @@ public class NetherNetExtension implements Extension {
                 initializingTransport = null;
                 synchronized (providerLifecycle) {
                     if (stopping) { client.close(); return; }
-                    try { providerShutdown = new ProviderShutdown(client::stop, message -> logger().warning(message)); }
+                    try { providerShutdown = new ProviderShutdown(client::stop, this::closeNetworkResources, message -> logger().warning(message)); }
                     catch (RuntimeException failure) { client.close(); throw failure; }
                     providerClient = client;
                     wardenClaim = new WardenClaimAdapter(client);
@@ -268,12 +268,16 @@ public class NetherNetExtension implements Extension {
 
     private void shutdown() {
         synchronized (providerLifecycle) {
+            if (stopping) return;
             stopping = true;
             if (providerShutdown != null) { providerShutdown.close(); providerShutdown = null; }
-            else if (providerClient != null) providerClient.close();
+            else closeNetworkResources();
             providerClient = null;
             wardenClaim = null;
         }
+    }
+
+    private void closeNetworkResources() {
         if (this.netherNetChannel != null) {
             this.netherNetChannel.close();
         }
