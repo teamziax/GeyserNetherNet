@@ -8,7 +8,6 @@ provider:
   authorization: automatic
   authorization-token: '' # Or set a per-customer secret here.
   authorization-token-file: ''
-  bootstrap-grant-file: ''
   region: EU
   pool: customers
   tags:

@@ -17,10 +17,9 @@ key. The public protocol is documented in NetworkCompatible's
 ## Authorization modes
 
 `provider.registration-mode` is `automatic`, `new-service` or `attach-instance`.
-`provider.authorization` is `automatic`, `anonymous-proof-of-work`,
-`bearer-token` or `bootstrap-grant`. Automatic mode selects a legacy grant when
-configured, otherwise creates a service; automatic authorization selects bearer
-when a token is present, then grant when present, otherwise anonymous PoW.
+`provider.authorization` is `automatic`, `anonymous-proof-of-work` or
+`bearer-token`. Automatic registration creates a service; automatic authorization
+selects bearer when a token is present and anonymous PoW otherwise.
 
 - Anonymous PoW creates a provisional service. On Warden it returns a private,
   optional claim URL.
@@ -28,14 +27,16 @@ when a token is present, then grant when present, otherwise anonymous PoW.
   represented by that token, without PoW.
 - A bearer token plus `attach-instance` joins an existing signalling service and
   placement. The token is reusable across independently keyed replicas.
-- A bootstrap grant is the original one-machine attachment flow and remains
-  supported for providers that bind a short-lived grant to the machine key.
+
+Providers decide whether tokens are reusable, narrow, short-lived or single-use,
+and how a wider credential may mint them. Token issuance is outside the protocol.
 
 Tokens are used only for the registration challenge. They are never written to
 `provider-state`, emitted by configuration `toString`, included in request JSON or
 sent to discovered lifecycle endpoints. Machine identity, assigned IDs and ticket
 keys are stored under `provider.state-directory`; give each logical replica its own
-durable directory.
+durable directory. Never share or copy that state between live instances on the
+same physical node.
 
 Configuration supports `authorization-token` and `authorization-token-file`.
 For managed environments, these provider-neutral variables override YAML:
@@ -46,11 +47,9 @@ For managed environments, these provider-neutral variables override YAML:
 | `NETHERNET_PROVIDER_URL` | Discovery/control origin |
 | `NETHERNET_PROVIDER_PROFILE` | Required advertised operational profile |
 | `NETHERNET_PROVIDER_REGISTRATION_MODE` | `new-service` or `attach-instance` |
-| `NETHERNET_PROVIDER_AUTHORIZATION` | PoW, bearer or bootstrap scheme |
+| `NETHERNET_PROVIDER_AUTHORIZATION` | PoW or bearer scheme |
 | `NETHERNET_PROVIDER_TOKEN` | Bearer token value |
 | `NETHERNET_PROVIDER_TOKEN_FILE` | File containing the bearer token |
-| `NETHERNET_PROVIDER_BOOTSTRAP_GRANT` | Legacy one-machine grant value |
-| `NETHERNET_PROVIDER_BOOTSTRAP_GRANT_FILE` | File containing that grant |
 | `NETHERNET_PROVIDER_REGION`, `NETHERNET_PROVIDER_POOL` | Immutable placement |
 | `NETHERNET_PROVIDER_TAGS` | JSON string object, for example `{"location":"london","role":"game-proxy"}` |
 | `NETHERNET_PROVIDER_LABEL` | Instance/service display label |
@@ -59,8 +58,7 @@ For managed environments, these provider-neutral variables override YAML:
 | `NETHERNET_PROVIDER_CAPACITY` | Routing capacity, separate from player count |
 
 Environment token value takes precedence over environment token file, which takes
-precedence over YAML token value and YAML token file. The same rule applies to
-bootstrap grants. Empty values are treated as absent.
+precedence over YAML token value and YAML token file. Empty values are absent.
 
 ## Examples
 

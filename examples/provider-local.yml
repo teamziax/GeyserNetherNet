@@ -8,7 +8,6 @@ provider:
   authorization: anonymous-proof-of-work
   authorization-token: ''
   authorization-token-file: ''
-  bootstrap-grant-file: ''
   region: ''
   pool: ''
   label: Geyser local conformance

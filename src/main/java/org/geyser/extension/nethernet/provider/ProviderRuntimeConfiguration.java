@@ -15,8 +15,8 @@ import java.util.TreeMap;
 /** Resolves vendor-neutral environment overrides without ever rendering secrets. */
 public record ProviderRuntimeConfiguration(
     String signallingMode, URI origin, String profile, Path stateDirectory, String registrationMode,
-    String authorizationScheme, String authorizationToken, String bootstrapGrant, String region,
-    String pool, Map<String, String> tags, String label, String bindAddress, int udpPort, int capacity
+    String authorizationScheme, String authorizationToken, String region, String pool,
+    Map<String, String> tags, String label, String bindAddress, int udpPort, int capacity
 ) {
     public static ProviderRuntimeConfiguration resolve(Config config, Path dataDirectory, Map<String, String> environment) throws IOException {
         Config.ProviderConfig provider = config.provider();
@@ -25,12 +25,11 @@ public record ProviderRuntimeConfiguration(
         String profile = value(environment, "NETHERNET_PROVIDER_PROFILE", provider.profile());
         Path stateDirectory = resolvePath(dataDirectory, value(environment, "NETHERNET_PROVIDER_STATE_DIRECTORY", provider.stateDirectory()));
         String token = secret(environment, "NETHERNET_PROVIDER_TOKEN", "NETHERNET_PROVIDER_TOKEN_FILE", provider.authorizationToken(), provider.authorizationTokenFile(), dataDirectory);
-        String grant = secret(environment, "NETHERNET_PROVIDER_BOOTSTRAP_GRANT", "NETHERNET_PROVIDER_BOOTSTRAP_GRANT_FILE", "", provider.bootstrapGrantFile(), dataDirectory);
         String requestedMode = value(environment, "NETHERNET_PROVIDER_REGISTRATION_MODE", provider.registrationMode());
-        String registrationMode = requestedMode.equals("automatic") ? (grant == null ? ProviderClient.NEW_SERVICE : ProviderClient.ATTACH_INSTANCE) : requestedMode;
+        String registrationMode = requestedMode.equals("automatic") ? ProviderClient.NEW_SERVICE : requestedMode;
         String requestedAuthorization = value(environment, "NETHERNET_PROVIDER_AUTHORIZATION", provider.authorization());
         String authorization = requestedAuthorization.equals("automatic")
-            ? token != null ? ProviderClient.BEARER_TOKEN : grant != null ? ProviderClient.BOOTSTRAP_GRANT : ProviderClient.ANONYMOUS_PROOF_OF_WORK
+            ? token == null ? ProviderClient.ANONYMOUS_PROOF_OF_WORK : ProviderClient.BEARER_TOKEN
             : requestedAuthorization;
         String region = nullable(value(environment, "NETHERNET_PROVIDER_REGION", provider.region()));
         String pool = nullable(value(environment, "NETHERNET_PROVIDER_POOL", provider.pool()));
@@ -42,13 +41,13 @@ public record ProviderRuntimeConfiguration(
         int udpPort = integer(environment, "NETHERNET_PROVIDER_UDP_PORT", provider.udpPort());
         int capacity = integer(environment, "NETHERNET_PROVIDER_CAPACITY", provider.capacity());
         // Reuse the library's complete mode, placement and tag validation before opening native resources.
-        new ProviderClient.Configuration(origin, profile, label, registrationMode, authorization, token, grant, region, pool, tags);
-        return new ProviderRuntimeConfiguration(signallingMode, origin, profile, stateDirectory, registrationMode, authorization, token, grant, region, pool,
+        new ProviderClient.Configuration(origin, profile, label, registrationMode, authorization, token, region, pool, tags);
+        return new ProviderRuntimeConfiguration(signallingMode, origin, profile, stateDirectory, registrationMode, authorization, token, region, pool,
             Map.copyOf(tags), label, bindAddress, udpPort, capacity);
     }
 
     public ProviderClient.Configuration clientConfiguration() {
-        return new ProviderClient.Configuration(origin, profile, label, registrationMode, authorizationScheme, authorizationToken, bootstrapGrant, region, pool, tags);
+        return new ProviderClient.Configuration(origin, profile, label, registrationMode, authorizationScheme, authorizationToken, region, pool, tags);
     }
 
     private static String secret(Map<String, String> environment, String directName, String fileName, String configured, String configuredFile, Path dataDirectory) throws IOException {
