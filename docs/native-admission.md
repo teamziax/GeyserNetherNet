@@ -1,51 +1,95 @@
 # Native provider mode (experimental)
 
-The ServiceLoader factory binds the native NXS admission endpoint and retains
-Geyser's existing NetherNet Bedrock child pipeline. It creates or validates the host-owned
-DTLS identity from `host-cert.pem` and `host-key.pem` in `provider.state-directory`.
-The host publishes a fresh boot incarnation, actual certificate fingerprint and
-fixed UDP candidate, and installs background host-specific admission keys. Client
-context arrives only in the authenticated token carried by STUN. The native
-adapter rejects per-join control admission.
+Provider mode accepts NetherNet connections on a shared UDP socket and passes
+accepted connections into Geyser's existing Bedrock pipeline. The extension
+creates or validates `host-cert.pem` and `host-key.pem` in
+`provider.state-directory`. It publishes the certificate fingerprint, a reachable
+UDP candidate and a fresh endpoint incarnation. Admission keys arrive through
+background registration and key updates.
 
-Build the pinned NetworkCompatible integration in a disposable checkout with:
+## How a connection is accepted
+
+1. libjuice recognises an incoming STUN Binding request and retains its first
+   packet in a bounded queue. The packet has not yet been authenticated.
+2. Java receives the request ID, ICE username fragments and source address.
+   Network validates the NXS token using its locally installed admission key and
+   reserves connection capacity. It makes no request to the provider.
+3. libdatachannel asks libjuice to verify STUN integrity before creating a peer.
+   Geyser installs the peer's callbacks and checks that its certificate matches
+   the published host identity.
+4. Native code attaches the peer and processes the retained first request. The
+   client does not need to retransmit it for acceptance to finish. DTLS checks
+   the client's expected certificate fingerprint before data channels open.
+
+Duplicate pending requests share one admission notification. Packet bytes stay
+native throughout this flow; there is no Java packet callback or packet replay
+API. Established ICE, DTLS and SCTP traffic stays native. Java receives the normal
+application messages delivered through the data channels.
+
+Token expiry prevents new admission. It does not disconnect an established
+session. A used token cannot allocate another session. Failed STUN authentication
+releases an unused token reservation so a forged packet does not consume the
+real client's token.
+
+## Current limits
+
+The extension's host factory uses `AdmissionGate.Limits.defaults()` from Network:
+
+| Resource or deadline | Limit |
+| --- | --- |
+| Retained native requests | 1024 |
+| Packet bytes retained per request | 2048 bytes, plus request metadata |
+| Time to accept a retained request | 15 seconds |
+| Session reservations, including peers still closing | 1024 |
+| Tracked token claims, including active and recently used tokens | 8192 |
+| Time for both NetherNet data channels to open after reservation | 15 seconds |
+
+These are transport limits. `provider.capacity` is a separate value advertised
+to the provider. Network supplies the limits above to the native listener; the
+standalone library defaults of 256 pending requests and 5 seconds do not apply
+here.
+
+Timeout and cancellation release a session reservation only after native teardown
+finishes. Repeated pending-limit rejections produce one aggregate warning at most
+every five seconds. `nethernet diagnostics` reports admission and native counters;
+it does not establish that a player reached gameplay.
+
+## Configure a test instance
+
+Set `mode: provider`, `fake-transport: false` and a `udp-port` separate from
+RakNet. Use profile `nxs-admission-v1` and the intended provider URL and
+authorization mode.
+
+A wildcard `bind-address` needs an explicit `advertised-address` or an unambiguous
+interface selection. Set `advertised-port` when a public NAT mapping uses a
+different port. The generated certificate and private key remain in the private
+state directory; existing keys are validated and reused. See
+[provider configuration](../PROVIDER.md) for the complete settings.
+
+## Build and verify the dependency chain
 
 ```sh
 bash scripts/build-native-development.sh
 ```
 
-The script checks out one immutable Network revision, builds its pinned JNI
-dependencies, runs provider/native tests, builds the extension and verifies
-the shaded factory service, sole native library and full revision manifest.
-It never merges or pushes either source branch. Linux x86_64, JDK 8/17/21,
-Python 3, OpenSSL development headers, CMake, Git and a C++ compiler are
-required. This JNI development classifier links system OpenSSL; other native
-platforms are not packaged until independently built and verified.
+Run this from a clean, committed checkout after updating the source pins. The
+script checks out the pinned Network revision, builds its pinned Java and native
+dependencies, runs their tests and builds the extension. It checks the packaged
+host factory, the single native library and every source revision in the JAR
+manifest. It also compares the packaged native bytes with the built artifact and
+writes the revisions and extension hash to `build/provenance.json`.
 
-The first authenticated STUN request is retained while the peer is created, then
-replayed through the mux thread as soon as that peer is ready. The client does
-not need to send another connectivity check to receive its first response.
-Retention happens only after bounded parsing, ticket validation and STUN
-integrity verification. Each pending admission holds at most one 2048-byte
-packet; the pending admission and native replay queues each allow 1024 entries.
-Authenticated requests rejected because pending admission is full produce an
-aggregated warning at most once every five seconds, outside the raw callback.
+The build requires Linux x86_64, JDK 8/17/21 toolchains, Python 3, OpenSSL development
+headers, CMake, Git and a C++ compiler. The current development artifact uses
+system OpenSSL and the build host's ABI. Other platforms need their own builds
+and validation.
 
-For a disposable game test, configure `mode: provider`, `fake-transport: false`
-and a `udp-port` separate from RakNet. A wildcard `bind-address` is supported with
-an explicit `advertised-address`, or an unambiguous interface selection. Public
-NAT mappings may also set `advertised-port`. The generated PEM pair is retained
-in the private state directory; existing keys are validated and never replaced.
-Use profile `nxs-admission-v1` and the configured provider URL/authorization mode.
+For coordinated local builds, set `NXS_NETWORK_SOURCE` to the clean pinned Network
+repository and `NATIVE_JAVA_CHECKOUT` to the clean pinned Java/native checkout.
+The same committed revision checks still apply. The script builds artifacts;
+it does not merge, push or deploy repositories.
 
-The script verifies all source pins before building, compares the packaged JNI
-bytes with the native artifact and writes `build/provenance.json` with source
-revisions and the final extension hash. For unpublished coordinated local work,
-set `NXS_NETWORK_SOURCE` to the clean pinned Network repository and
-`NATIVE_JAVA_CHECKOUT` to the clean pinned Java/native repository. Both are still
-verified against committed manifests. Source snapshots, merges and deployments
-are separate from artifact creation.
-
-Build, factory packaging and native/Worker echo do not prove a stock Minecraft
-game join. Stock-client identity, token limits, both channels into gameplay,
-reconnect, two-host routing and direct-join regression must still be recorded.
+A successful build and native connection test establish transport behaviour.
+Verification on the test server must also record a stock-client game join,
+reconnect and direct-join behaviour. Two-host routing needs a separate test when
+that setup is used.
