@@ -19,7 +19,8 @@ public final class GameOutcomeTransport implements ProviderTransport {
 
     @Override public CompletionStage<JsonObject> hostProfile() { return delegate.hostProfile(); }
     @Override public CompletionStage<Void> installTicketKeys(List<TicketKey> keys) { return delegate.installTicketKeys(keys); }
-    @Override public CompletionStage<ApplyResult> applyControl(JsonObject command) { return delegate.applyControl(command); }
+    @Override public CompletionStage<ApplyResult> applyState(String state) { return delegate.applyState(state); }
+    @Override public boolean supportsGameOutcomes() { return true; }
     @Override public List<JsonObject> pollEvents() {
         List<JsonObject> batch = new ArrayList<>(delegate.pollEvents());
         outcomes.drainTo(batch, Math.max(0, 100 - batch.size()));

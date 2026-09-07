@@ -97,7 +97,7 @@ class GameOutcomeReporterTest {
         final List<JsonObject> events = new ArrayList<>(); boolean closed;
         public CompletionStage<JsonObject> hostProfile() { return CompletableFuture.completedFuture(new JsonObject()); }
         public CompletionStage<Void> installTicketKeys(List<TicketKey> keys) { return CompletableFuture.completedFuture(null); }
-        public CompletionStage<ApplyResult> applyControl(JsonObject command) { return CompletableFuture.completedFuture(ApplyResult.APPLIED); }
+        public CompletionStage<ApplyResult> applyState(String state) { return CompletableFuture.completedFuture(ApplyResult.APPLIED); }
         public List<JsonObject> pollEvents() { List<JsonObject> result = new ArrayList<>(events); events.clear(); return result; }
         public CompletionStage<Void> drain() { return CompletableFuture.completedFuture(null); }
         public CompletionStage<Void> close() { closed = true; return CompletableFuture.completedFuture(null); }
