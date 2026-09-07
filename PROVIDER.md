@@ -25,14 +25,49 @@ The directory and key use owner-only permissions. Identity creation needs no
 external OpenSSL command. Existing machine identity, registration and ticket-key
 state retain their paths and values.
 
-The default binds UDP `0.0.0.0:19133`. A concrete bind address is also the default
-advertised candidate. With a wildcard bind, the extension selects an address only
-when exactly one suitable interface exists. A multihomed host must set
-`provider.advertised-address` or `NETHERNET_PROVIDER_ADVERTISED_ADDRESS` explicitly.
-Set `advertised-port` when external forwarding differs from `udp-port`; arranging
-that forwarding and choosing an address reachable by clients remain host tasks.
-Wildcard addresses are never published as candidates. Keep this UDP endpoint
-separate from Geyser's RakNet listener.
+The default binds UDP `0.0.0.0:19133` and advertises suitable IPv4 addresses from
+every active interface, including VPN interfaces. A suitable concrete bind advertises
+that address only. Configure `bind-address: '::'` for the pinned native transport's
+dual-stack wildcard listener: it advertises suitable IPv4 and IPv6 addresses.
+An explicit IPv6 address binds only that address. Interface discovery is refreshed
+on background provider check-ins; it does not send network probes.
+
+Use `provider.advertised-endpoints` for external IP/port pairs supplied by a host's
+forwarding configuration. These are added to the bound addresses. Each entry has
+an `address` containing a numeric IPv4 or IPv6 literal, and a `port`; omitted or
+zero ports reuse `udp-port`. Brackets and interface scope suffixes are not used in
+the address field. For example, replace both documentation IPs with your own:
+
+```yaml
+provider:
+  bind-address: '::'
+  udp-port: 19133
+  advertised-endpoints:
+    - address: '203.0.113.10' # Replace with your actual public IPv4.
+      port: 29133
+    - address: '2001:db8::10' # Replace with your actual public IPv6.
+      port: 39133
+```
+
+The legacy `advertised-address`/`advertised-port` settings remain supported as an
+additional endpoint. A legacy port override without an address adds that port for
+each discovered bind address. Configured forwarders may translate address families;
+operators must arrange the forwarding themselves. A proxy may forward an external
+endpoint to a loopback bind; only the usable external endpoint is advertised in that
+case. Configuration changes take effect
+after restart, while interface changes on a wildcard listener are rediscovered.
+
+Endpoints are deduplicated and limited to 32. If the combined set exceeds that limit,
+use a concrete bind or fewer explicit mappings. Wildcard, link-local, multicast,
+loopback, documentation and other unusable addresses are not published to external
+providers. Explicit loopback/documentation fixtures are permitted only when the
+provider itself is local. Keep NetherNet UDP separate from Geyser's RakNet listener.
+
+Startup warns when all advertised endpoints are private/shared, or when all are
+IPv6. Private/shared addresses require client LAN, VPN or routed connectivity;
+Warden does not relay game traffic. IPv6-only endpoints cannot serve IPv4-only
+clients. These warnings use the combined bound and external endpoint set, so a
+public forwarded address avoids a misleading warning about a private local bind.
 
 Existing `warden-admission-v1` configuration profiles migrate to
 `nxs-admission-v1`; configured URLs, state directories, keys, tokens and endpoints
@@ -90,6 +125,7 @@ For managed environments, these provider-neutral variables override YAML:
 | `NETHERNET_PROVIDER_STATE_DIRECTORY` | Durable private state path |
 | `NETHERNET_PROVIDER_BIND_ADDRESS`, `NETHERNET_PROVIDER_UDP_PORT` | Native UDP bind |
 | `NETHERNET_PROVIDER_ADVERTISED_ADDRESS`, `NETHERNET_PROVIDER_ADVERTISED_PORT` | Reachable UDP candidate; advertised port 0 reuses the bind port |
+| `NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS` | JSON array of `{"address":"IP","port":29133}` objects; overrides the YAML list |
 | `NETHERNET_PROVIDER_CAPACITY` | Routing capacity, separate from player count |
 
 Environment token value takes precedence over environment token file, which takes

@@ -1,50 +1,76 @@
 package org.geyser.extension.nethernet.admission;
 
+import org.cloudburstmc.netty.signalling.admission.EndpointAddress;
 import java.io.IOException;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.net.*;
+import java.util.*;
 
-/** Keeps the local socket binding separate from the candidate reachable by clients. */
-public record ProviderEndpoint(InetSocketAddress bind, InetSocketAddress advertised) {
-    public static ProviderEndpoint resolve(InetSocketAddress bind, String advertisedAddress, int advertisedPort) throws IOException {
-        boolean selectInterface = (advertisedAddress == null || advertisedAddress.isBlank())
-            && !bind.isUnresolved() && bind.getAddress().isAnyLocalAddress();
-        return resolve(bind, advertisedAddress, advertisedPort, selectInterface ? interfaces() : List.of());
+/** Bound addresses plus operator-provisioned forwarding endpoints. Discovery never guesses NAT mappings. */
+public record ProviderEndpoint(InetSocketAddress bind, List<InetSocketAddress> advertised) {
+    public static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment) throws IOException {
+        return resolve(bind, external, localDevelopment, 0);
     }
 
-    static ProviderEndpoint resolve(InetSocketAddress bind, String advertisedAddress, int advertisedPort,
+    public static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment, int legacyAdvertisedPort) throws IOException {
+        if (bind.isUnresolved()) throw new IOException("Provider bind-address could not be resolved");
+        return resolve(bind, external, localDevelopment, bind.getAddress().isAnyLocalAddress() ? interfaces() : List.of(), legacyAdvertisedPort);
+    }
+
+    static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment,
                                     List<InetAddress> interfaces) throws IOException {
+        return resolve(bind, external, localDevelopment, interfaces, 0);
+    }
+
+    static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment,
+                                    List<InetAddress> interfaces, int legacyAdvertisedPort) throws IOException {
         if (bind.isUnresolved() || bind.getPort() < 1 || bind.getAddress().isMulticastAddress())
-            throw new IOException("Provider bind-address must resolve to a local unicast or wildcard address and a fixed UDP port");
-        if (advertisedPort < 0 || advertisedPort > 65535) throw new IOException("Invalid provider advertised-port");
-        int port = advertisedPort == 0 ? bind.getPort() : advertisedPort;
-        InetAddress address;
-        if (advertisedAddress != null && !advertisedAddress.isBlank()) {
-            InetAddress[] resolved = InetAddress.getAllByName(advertisedAddress);
-            if (resolved.length != 1) throw new IOException("Set provider.advertised-address to one explicit IP address");
-            address = resolved[0];
-        } else if (!bind.getAddress().isAnyLocalAddress()) {
-            address = bind.getAddress();
-        } else {
-            List<InetAddress> candidates = interfaces.stream().filter(candidate ->
-                !candidate.isAnyLocalAddress() && !candidate.isLoopbackAddress()
-                    && !candidate.isLinkLocalAddress() && !candidate.isMulticastAddress()
-                    && (candidate instanceof Inet4Address) == (bind.getAddress() instanceof Inet4Address))
-                .distinct().toList();
-            if (candidates.size() != 1) throw new IOException(
-                "Cannot select a unique reachable UDP address; set provider.advertised-address or NETHERNET_PROVIDER_ADVERTISED_ADDRESS");
-            address = candidates.getFirst();
+            throw new IOException("Provider bind-address must resolve to a local unicast or wildcard address and fixed UDP port");
+        Set<InetSocketAddress> endpoints = new LinkedHashSet<>();
+        // Configured mappings are explicit assertions about the forwarder, which may translate IP families.
+        for (InetSocketAddress endpoint : external) {
+            if (endpoint.isUnresolved() || endpoint.getPort() < 1 || !EndpointAddress.advertisable(endpoint.getAddress(), localDevelopment))
+                throw new IOException("Advertised endpoint must be a usable numeric unicast IP and UDP port");
+            endpoints.add(endpoint);
         }
-        if (address.isAnyLocalAddress() || address.isMulticastAddress() || address.isLinkLocalAddress())
-            throw new IOException("Provider advertised-address must be a concrete reachable unicast address");
-        if ((address instanceof Inet4Address) != (bind.getAddress() instanceof Inet4Address))
-            throw new IOException("Provider bind-address and advertised-address must use the same IP family");
-        return new ProviderEndpoint(bind, new InetSocketAddress(address, port));
+        if (!bind.getAddress().isAnyLocalAddress()) {
+            // A local proxy may forward a configured external endpoint to a loopback listener.
+            if (EndpointAddress.advertisable(bind.getAddress(), localDevelopment)) {
+                InetAddress unscoped = InetAddress.getByAddress(bind.getAddress().getAddress());
+                endpoints.add(new InetSocketAddress(unscoped, bind.getPort()));
+                if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(unscoped, legacyAdvertisedPort));
+            }
+        } else {
+            for (InetAddress address : interfaces) {
+                // The pinned native listener uses IPV6_V6ONLY=0 for ::. A 0.0.0.0 socket is IPv4 only.
+                if (!address.isLoopbackAddress() && EndpointAddress.advertisable(address, localDevelopment)
+                    && (!(bind.getAddress() instanceof Inet4Address) || address instanceof Inet4Address)) {
+                    InetAddress unscoped = InetAddress.getByAddress(address.getAddress());
+                    endpoints.add(new InetSocketAddress(unscoped, bind.getPort()));
+                    if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(unscoped, legacyAdvertisedPort));
+                }
+            }
+        }
+        if (endpoints.isEmpty()) throw new IOException("No usable UDP endpoints; configure provider.advertised-endpoints for external forwarding");
+        if (endpoints.size() > 32) throw new IOException("More than 32 UDP endpoints; bind to a specific address to limit interface discovery");
+        List<InetSocketAddress> sorted = endpoints.stream().sorted(Comparator
+            .comparingInt(ProviderEndpoint::rank)
+            .thenComparing(endpoint -> endpoint.getAddress().getHostAddress())
+            .thenComparingInt(InetSocketAddress::getPort)).toList();
+        return new ProviderEndpoint(bind, sorted);
+    }
+
+    public List<String> warnings() {
+        List<String> messages = new ArrayList<>();
+        if (advertised.stream().noneMatch(endpoint -> EndpointAddress.scope(endpoint.getAddress()) == EndpointAddress.Scope.PUBLIC))
+            messages.add("Only private/shared or local addresses are advertised. Clients need LAN, VPN or routed connectivity to these endpoints. External signalling providers may advertise them; Warden does not relay game traffic.");
+        if (advertised.stream().allMatch(endpoint -> endpoint.getAddress() instanceof Inet6Address))
+            messages.add("Only IPv6 endpoints are advertised. Clients without working IPv6 connectivity to this host cannot join. Configure a reachable IPv4 endpoint for IPv4 clients.");
+        return List.copyOf(messages);
+    }
+
+    private static int rank(InetSocketAddress endpoint) {
+        return (EndpointAddress.scope(endpoint.getAddress()) == EndpointAddress.Scope.PUBLIC ? 0 : 2)
+            + (endpoint.getAddress() instanceof Inet6Address ? 0 : 1);
     }
 
     private static List<InetAddress> interfaces() throws IOException {
