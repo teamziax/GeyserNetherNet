@@ -26,8 +26,8 @@ external OpenSSL command. Existing machine identity, registration and ticket-key
 state retain their paths and values.
 
 The default binds UDP `0.0.0.0:19133` and advertises suitable IPv4 addresses from
-every active interface, including VPN interfaces. A concrete bind advertises that
-address only. Configure `bind-address: '::'` for the pinned native transport's
+every active interface, including VPN interfaces. A suitable concrete bind advertises
+that address only. Configure `bind-address: '::'` for the pinned native transport's
 dual-stack wildcard listener: it advertises suitable IPv4 and IPv6 addresses.
 An explicit IPv6 address binds only that address. Interface discovery is refreshed
 on background provider check-ins; it does not send network probes.
@@ -52,7 +52,9 @@ provider:
 The legacy `advertised-address`/`advertised-port` settings remain supported as an
 additional endpoint. A legacy port override without an address adds that port for
 each discovered bind address. Configured forwarders may translate address families;
-operators must arrange the forwarding themselves. Configuration changes take effect
+operators must arrange the forwarding themselves. A proxy may forward an external
+endpoint to a loopback bind; only the usable external endpoint is advertised in that
+case. Configuration changes take effect
 after restart, while interface changes on a wildcard listener are rediscovered.
 
 Endpoints are deduplicated and limited to 32. If the combined set exceeds that limit,

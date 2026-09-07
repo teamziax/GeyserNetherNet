@@ -41,6 +41,15 @@ class ProviderEndpointTest {
         assertEquals(2, result.advertised().size());
     }
 
+    @Test void explicitForwardersMayTargetLoopbackWithoutPublishingLoopback() throws Exception {
+        var bind = endpoint("127.0.0.1", 19133);
+        var external = endpoint("8.8.8.8", 29133);
+        var result = ProviderEndpoint.resolve(bind, List.of(external), false, List.of());
+        assertEquals(bind, result.bind());
+        assertEquals(List.of(external), result.advertised());
+        assertTrue(result.warnings().isEmpty());
+    }
+
     @Test void legacyPortOnlyConfigurationRetainsBothInternalAndForwardedPorts() throws Exception {
         var result = ProviderEndpoint.resolve(endpoint("0.0.0.0", 19133), List.of(), false, List.of(address("8.8.8.8")), 29133);
         assertEquals(List.of(endpoint("8.8.8.8", 19133), endpoint("8.8.8.8", 29133)), result.advertised());

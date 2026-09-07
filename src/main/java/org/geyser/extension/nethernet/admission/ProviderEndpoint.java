@@ -33,9 +33,12 @@ public record ProviderEndpoint(InetSocketAddress bind, List<InetSocketAddress> a
             endpoints.add(endpoint);
         }
         if (!bind.getAddress().isAnyLocalAddress()) {
-            if (!EndpointAddress.advertisable(bind.getAddress(), localDevelopment)) throw new IOException("Provider bind-address is not suitable for external signalling");
-            endpoints.add(bind);
-            if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(bind.getAddress(), legacyAdvertisedPort));
+            // A local proxy may forward a configured external endpoint to a loopback listener.
+            if (EndpointAddress.advertisable(bind.getAddress(), localDevelopment)) {
+                InetAddress unscoped = InetAddress.getByAddress(bind.getAddress().getAddress());
+                endpoints.add(new InetSocketAddress(unscoped, bind.getPort()));
+                if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(unscoped, legacyAdvertisedPort));
+            }
         } else {
             for (InetAddress address : interfaces) {
                 // The pinned native listener uses IPV6_V6ONLY=0 for ::. A 0.0.0.0 socket is IPv4 only.
