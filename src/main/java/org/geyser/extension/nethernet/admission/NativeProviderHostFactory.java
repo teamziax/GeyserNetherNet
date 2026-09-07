@@ -7,6 +7,11 @@ import org.geyser.extension.nethernet.provider.ProviderHostFactory;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
+import java.io.UncheckedIOException;
+import org.cloudburstmc.netty.signalling.admission.EndpointAddress;
+import com.google.gson.JsonParser;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -17,12 +22,21 @@ public final class NativeProviderHostFactory implements ProviderHostFactory {
             String directory = options.get("stateDirectory");
             if (directory == null || directory.isBlank()) throw new IllegalArgumentException("Provider stateDirectory required");
             Path state = Path.of(directory);
-            ProviderEndpoint endpoint = ProviderEndpoint.resolve(udpBind, options.get("advertisedAddress"),
-                Integer.parseInt(options.getOrDefault("advertisedPort", "0")));
+            List<InetSocketAddress> external = new ArrayList<>();
+            for (var value : JsonParser.parseString(options.getOrDefault("advertisedEndpoints", "[]")).getAsJsonArray()) {
+                var address = value.getAsJsonObject();
+                external.add(new InetSocketAddress(EndpointAddress.parse(address.get("address").getAsString()), address.get("port").getAsInt()));
+            }
+            boolean localDevelopment = Boolean.parseBoolean(options.getOrDefault("localDevelopment", "false"));
+            int legacyAdvertisedPort = Integer.parseInt(options.getOrDefault("legacyAdvertisedPort", "0"));
+            ProviderEndpoint endpoint = ProviderEndpoint.resolve(udpBind, external, localDevelopment, legacyAdvertisedPort);
             var identity = ProviderHostIdentity.ensure(state);
-            return NativeProviderTransport.open(bootstrap, endpoint.bind(), endpoint.advertised(),
+            return NativeProviderTransport.open(bootstrap, endpoint.bind(), () -> {
+                try { return ProviderEndpoint.resolve(udpBind, external, localDevelopment, legacyAdvertisedPort).advertised(); }
+                catch (java.io.IOException unavailable) { throw new UncheckedIOException(unavailable); }
+            },
                 identity.certificate(), identity.privateKey(), AdmissionGate.Limits.defaults())
-                .thenApply(transport -> new Host(transport, transport.channel()));
+                .thenApply(transport -> new Host(transport, transport.channel(), endpoint.warnings()));
         } catch (Exception invalid) { return CompletableFuture.failedFuture(invalid); }
     }
 }

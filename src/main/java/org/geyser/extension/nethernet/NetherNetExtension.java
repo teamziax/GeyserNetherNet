@@ -151,8 +151,11 @@ public class NetherNetExtension implements Extension {
                     eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
                     ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance(), gameOutcomes));
                     ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(runtime.bindAddress(), runtime.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", runtime.profile(),
-                        "advertisedAddress", runtime.advertisedAddress(), "advertisedPort", Integer.toString(runtime.advertisedPort()))).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
+                        "advertisedEndpoints", runtime.encodedAdvertisedEndpoints(),
+                        "legacyAdvertisedPort", Integer.toString(runtime.advertisedAddress().isBlank() ? runtime.advertisedPort() : 0),
+                        "localDevelopment", Boolean.toString(java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(origin.getHost())))).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
                     netherNetChannel = host.channel(); transport = host.transport();
+                    host.warnings().forEach(message -> logger().warning(message));
                     if (stopping) { transport.close(); netherNetChannel.close(); eventLoopGroup.shutdownGracefully(); return; }
                 }
                 initializingTransport = transport;

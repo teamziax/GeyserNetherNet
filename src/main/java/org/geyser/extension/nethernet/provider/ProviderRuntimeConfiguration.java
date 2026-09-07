@@ -10,6 +10,10 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.net.InetSocketAddress;
+import org.cloudburstmc.netty.signalling.admission.EndpointAddress;
 import java.util.TreeMap;
 
 /** Resolves vendor-neutral environment overrides without ever rendering secrets. */
@@ -17,7 +21,7 @@ public record ProviderRuntimeConfiguration(
     String signallingMode, URI origin, String profile, Path stateDirectory, String registrationMode,
     String authorizationScheme, String authorizationToken, String region, String pool,
     Map<String, String> tags, String label, String bindAddress, int udpPort,
-    String advertisedAddress, int advertisedPort, int capacity
+    String advertisedAddress, int advertisedPort, List<InetSocketAddress> advertisedEndpoints, int capacity
 ) {
     public static ProviderRuntimeConfiguration resolve(Config config, Path dataDirectory, Map<String, String> environment) throws IOException {
         Config.ProviderConfig provider = config.provider();
@@ -44,15 +48,45 @@ public record ProviderRuntimeConfiguration(
         int advertisedPort = integer(environment, "NETHERNET_PROVIDER_ADVERTISED_PORT", provider.advertisedPort());
         if (udpPort < 1 || udpPort > 65535 || advertisedPort < 0 || advertisedPort > 65535)
             throw new IOException("Provider UDP ports must be 1-65535 (advertised-port may be 0 to reuse udp-port)");
+        List<InetSocketAddress> endpoints = new ArrayList<>();
+        if (environment.containsKey("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS")) {
+            try {
+                var values = JsonParser.parseString(environment.get("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS")).getAsJsonArray();
+                for (var value : values) {
+                    JsonObject endpoint = value.getAsJsonObject();
+                    if (!endpoint.get("address").isJsonPrimitive() || !endpoint.getAsJsonPrimitive("address").isString()) throw new IllegalArgumentException();
+                    int port = endpoint.has("port") ? Integer.parseInt(endpoint.get("port").getAsString()) : 0;
+                    endpoints.add(endpoint(endpoint.get("address").getAsString(), port, udpPort));
+                }
+            } catch (RuntimeException invalid) { throw new IOException("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS must be a JSON array of address/port objects", invalid); }
+        } else {
+            for (var endpoint : provider.advertisedEndpoints()) endpoints.add(endpoint(endpoint.address(), endpoint.port(), udpPort));
+        }
+        if (advertisedAddress != null && !advertisedAddress.isBlank()) endpoints.add(endpoint(advertisedAddress, advertisedPort, udpPort));
+        endpoints = endpoints.stream().distinct().toList();
+        if (endpoints.size() > 32) throw new IOException("Configure at most 32 advertised endpoints");
         int capacity = integer(environment, "NETHERNET_PROVIDER_CAPACITY", provider.capacity());
         // Reuse the library's complete mode, placement and tag validation before opening native resources.
         new ProviderClient.Configuration(origin, profile, label, registrationMode, authorization, token, region, pool, tags);
         return new ProviderRuntimeConfiguration(signallingMode, origin, profile, stateDirectory, registrationMode, authorization, token, region, pool,
-            Map.copyOf(tags), label, bindAddress, udpPort, advertisedAddress, advertisedPort, capacity);
+            Map.copyOf(tags), label, bindAddress, udpPort, advertisedAddress, advertisedPort, endpoints, capacity);
     }
 
     public ProviderClient.Configuration clientConfiguration() {
         return new ProviderClient.Configuration(origin, profile, label, registrationMode, authorizationScheme, authorizationToken, region, pool, tags);
+    }
+
+    private static InetSocketAddress endpoint(String address, int port, int udpPort) throws IOException {
+        if (port < 0 || port > 65535) throw new IOException("Advertised endpoint port must be 1-65535, or 0 to reuse udp-port");
+        return new InetSocketAddress(EndpointAddress.parse(address), port == 0 ? udpPort : port);
+    }
+
+    public String encodedAdvertisedEndpoints() {
+        var values = new com.google.gson.JsonArray();
+        for (var endpoint : advertisedEndpoints) {
+            var value = new JsonObject(); value.addProperty("address", endpoint.getAddress().getHostAddress()); value.addProperty("port", endpoint.getPort()); values.add(value);
+        }
+        return values.toString();
     }
 
     private static String secret(Map<String, String> environment, String directName, String fileName, String configured, String configuredFile, Path dataDirectory) throws IOException {

@@ -8,6 +8,28 @@ import java.nio.file.*;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 class ProviderConfigurationTest {
+    @Test void loadsMultipleExternalEndpointsAndEnvironmentOverride(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("config.yml"), """
+            mode: provider
+            provider:
+              udp-port: 19133
+              advertised-endpoints:
+                - address: 8.8.8.8
+                  port: 29133
+                - address: '2606:4700:4700::1111'
+                  port: 39133
+            """);
+        var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile());
+        var runtime = ProviderRuntimeConfiguration.resolve(config, dir, Map.of());
+        assertEquals(2, runtime.advertisedEndpoints().size());
+        assertEquals(29133, runtime.advertisedEndpoints().get(0).getPort());
+        assertEquals(39133, runtime.advertisedEndpoints().get(1).getPort());
+        var overridden = ProviderRuntimeConfiguration.resolve(config, dir, Map.of("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS", "[{\"address\":\"1.1.1.1\"}]"));
+        assertEquals(java.util.List.of(new java.net.InetSocketAddress("1.1.1.1", 19133)), overridden.advertisedEndpoints());
+        for (String invalid : java.util.List.of("{}", "[{\"address\":\"game.example\"}]", "[{\"address\":\"8.8.8.8\",\"port\":1.5}]", "[{\"address\":\"8.8.8.8\",\"port\":65536}]"))
+            assertThrows(java.io.IOException.class, () -> ProviderRuntimeConfiguration.resolve(config, dir, Map.of("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS", invalid)));
+    }
+
     @Test void defaultsToAnonymousWardenProviderAndSupportsBearerFleetEnvironment(@TempDir Path dir) throws Exception {
         var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile());
         assertEquals("provider", config.mode());

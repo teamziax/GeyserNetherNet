@@ -5,6 +5,7 @@ import org.spongepowered.configurate.interfaces.meta.defaults.DefaultString;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import java.util.Map;
+import java.util.List;
 
 @ConfigSerializable
 public interface Config {
@@ -35,10 +36,12 @@ public interface Config {
         @Comment("Separate UDP endpoint from the RakNet listener")
         @DefaultString("0.0.0.0") String bindAddress();
         default int udpPort() { return 19133; }
-        @Comment("Reachable UDP candidate address. Empty uses a concrete bind or the only suitable interface; set explicitly on multihomed/NAT hosts")
+        @Comment("Legacy single external IP. Added to bound endpoints; advertised-endpoints supports multiple external IP/port pairs")
         @DefaultString("") String advertisedAddress();
         @Comment("Reachable UDP candidate port; 0 uses udp-port. Configure forwarding separately when using NAT")
         default int advertisedPort() { return 0; }
+        @Comment("Additional external UDP endpoints for port forwarding. Each entry has address (numeric IP) and port (0 reuses udp-port)")
+        default List<AdvertisedEndpointConfig> advertisedEndpoints() { return List.of(); }
         @Comment("Routing admission capacity; independent of advertised maxPlayers")
         default int capacity() { return 100; }
         @Comment("World name when unavailable from the query response")
@@ -47,6 +50,12 @@ public interface Config {
         default int gameType() { return 0; }
         @Comment("Explicit conformance transport; never use for a playable server")
         @DefaultBoolean(false) boolean fakeTransport();
+    }
+
+    @ConfigSerializable
+    interface AdvertisedEndpointConfig {
+        String address();
+        default int port() { return 0; }
     }
 
     @Comment("HTTPS settings")
