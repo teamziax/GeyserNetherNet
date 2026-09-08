@@ -42,36 +42,20 @@ spec:
               containerPort: 19133
               protocol: UDP
           env:
-            - name: NETHERNET_SIGNALLING_MODE
-              value: provider
-            - name: NETHERNET_PROVIDER_URL
+            - name: NETHERNET_SIGNALLING
+              value: nxs
+            - name: NETHERNET_NXS_ENDPOINT
               value: https://agent.warden.cloud
-            - name: NETHERNET_PROVIDER_PROFILE
-              value: nxs-admission-v1
-            - name: NETHERNET_PROVIDER_REGISTRATION_MODE
-              value: attach-instance
-            - name: NETHERNET_PROVIDER_AUTHORIZATION
-              value: bearer-token
-            - name: NETHERNET_PROVIDER_TOKEN
+            - name: NETHERNET_NXS_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: nethernet-proxy-provider
                   key: token
-            - name: NETHERNET_PROVIDER_REGION
-              value: EU
-            - name: NETHERNET_PROVIDER_POOL
-              value: proxy
-            - name: NETHERNET_PROVIDER_TAGS
-              value: '{"location":"london","role":"game-proxy"}'
-            - name: NETHERNET_PROVIDER_LABEL
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: NETHERNET_PROVIDER_STATE_DIRECTORY
-              value: /var/lib/nethernet/provider-state
+            - name: NETHERNET_NXS_DATA
+              value: '{"region":"EU","pool":"proxy","location":"london","role":"game-proxy"}'
           volumeMounts:
             - name: provider-state
-              mountPath: /var/lib/nethernet
+              mountPath: /opt/geyser/extensions/nethernet
   volumeClaimTemplates:
     - metadata:
         name: provider-state

@@ -1,19 +1,7 @@
-# Local fake transport only; no gameplay is accepted by this configuration.
-mode: provider
-provider:
-  url: http://127.0.0.1:8787
-  profile: nxs-admission-v1
-  state-directory: provider-state
-  registration-mode: new-service
-  authorization: anonymous-proof-of-work
-  authorization-token: ''
-  authorization-token-file: ''
-  region: ''
-  pool: ''
-  label: Geyser local conformance
-  bind-address: 127.0.0.1
-  udp-port: 19133
-  capacity: 100
-  level: Fixture
-  game-type: 0
-  fake-transport: true
+# Anonymous registration with Warden, plus inbuilt HTTP signalling.
+signalling: hybrid
+nxs:
+  advertise-addresses: []
+  token: ''
+  endpoint: https://agent.warden.cloud
+  data: {}

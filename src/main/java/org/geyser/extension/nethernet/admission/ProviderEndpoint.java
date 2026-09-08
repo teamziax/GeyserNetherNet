@@ -8,21 +8,12 @@ import java.util.*;
 /** Bound addresses plus operator-provisioned forwarding endpoints. Discovery never guesses NAT mappings. */
 public record ProviderEndpoint(InetSocketAddress bind, List<InetSocketAddress> advertised) {
     public static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment) throws IOException {
-        return resolve(bind, external, localDevelopment, 0);
-    }
-
-    public static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment, int legacyAdvertisedPort) throws IOException {
         if (bind.isUnresolved()) throw new IOException("Provider bind-address could not be resolved");
-        return resolve(bind, external, localDevelopment, bind.getAddress().isAnyLocalAddress() ? interfaces() : List.of(), legacyAdvertisedPort);
+        return resolve(bind, external, localDevelopment, bind.getAddress().isAnyLocalAddress() ? interfaces() : List.of());
     }
 
     static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment,
                                     List<InetAddress> interfaces) throws IOException {
-        return resolve(bind, external, localDevelopment, interfaces, 0);
-    }
-
-    static ProviderEndpoint resolve(InetSocketAddress bind, List<InetSocketAddress> external, boolean localDevelopment,
-                                    List<InetAddress> interfaces, int legacyAdvertisedPort) throws IOException {
         if (bind.isUnresolved() || bind.getPort() < 1 || bind.getAddress().isMulticastAddress())
             throw new IOException("Provider bind-address must resolve to a local unicast or wildcard address and fixed UDP port");
         Set<InetSocketAddress> endpoints = new LinkedHashSet<>();
@@ -37,7 +28,6 @@ public record ProviderEndpoint(InetSocketAddress bind, List<InetSocketAddress> a
             if (EndpointAddress.advertisable(bind.getAddress(), localDevelopment)) {
                 InetAddress unscoped = InetAddress.getByAddress(bind.getAddress().getAddress());
                 endpoints.add(new InetSocketAddress(unscoped, bind.getPort()));
-                if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(unscoped, legacyAdvertisedPort));
             }
         } else {
             for (InetAddress address : interfaces) {
@@ -46,11 +36,10 @@ public record ProviderEndpoint(InetSocketAddress bind, List<InetSocketAddress> a
                     && (!(bind.getAddress() instanceof Inet4Address) || address instanceof Inet4Address)) {
                     InetAddress unscoped = InetAddress.getByAddress(address.getAddress());
                     endpoints.add(new InetSocketAddress(unscoped, bind.getPort()));
-                    if (legacyAdvertisedPort > 0) endpoints.add(new InetSocketAddress(unscoped, legacyAdvertisedPort));
                 }
             }
         }
-        if (endpoints.isEmpty()) throw new IOException("No usable UDP endpoints; configure provider.advertised-endpoints for external forwarding");
+        if (endpoints.isEmpty()) throw new IOException("No usable UDP endpoints; configure nxs.advertise-addresses for external forwarding");
         if (endpoints.size() > 32) throw new IOException("More than 32 UDP endpoints; bind to a specific address to limit interface discovery");
         List<InetSocketAddress> sorted = endpoints.stream().sorted(Comparator
             .comparingInt(ProviderEndpoint::rank)

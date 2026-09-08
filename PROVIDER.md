@@ -1,172 +1,128 @@
-# Provider registration
+# Signalling configuration
 
-Geyser now defaults to provider mode. It discovers
-`https://agent.warden.cloud`, creates a fresh machine key, completes the advertised
-anonymous proof-of-work flow and logs the assigned public address plus Warden's
-optional account-claim action. An existing `mode: local` configuration remains an
-explicit opt-out.
-
-The client is not tied to Warden discovery or account APIs. `provider.url` can be
-any HTTPS origin implementing `nethernet-external-signalling-v1` and advertising
-a compatible operational profile. Protocol, profile, operations, authorization
-schemes and limits are accepted only through same-origin discovery; redirects are
-disabled. Every registration mode still proves possession of a new P-384 machine
-key. The public protocol is documented in NetworkCompatible's
-[NXS specification](https://github.com/teamziax/NetworkCompatible/blob/nxs-dev/docs/external-signalling/README.md).
-
-## Endpoint and identity initialization
-
-On first start the extension generates an EC P-256 DTLS key and self-signed
-certificate using Java APIs. They are private `host-key.pem` (PKCS8) and
-`host-cert.pem` files in the existing provider state directory. Restarts validate
-and reuse that pair. Missing one half, mismatched keys and symbolic-link identity
-files stop startup; restore the existing matching pair rather than replacing it.
-The directory and key use owner-only permissions. Identity creation needs no
-external OpenSSL command. Existing machine identity, registration and ticket-key
-state retain their paths and values.
-
-The default binds UDP `0.0.0.0:19133` and advertises suitable IPv4 addresses from
-every active interface, including VPN interfaces. A suitable concrete bind advertises
-that address only. Configure `bind-address: '::'` for the pinned native transport's
-dual-stack wildcard listener: it advertises suitable IPv4 and IPv6 addresses.
-An explicit IPv6 address binds only that address. Interface discovery is refreshed
-on background provider check-ins; it does not send network probes.
-
-Use `provider.advertised-endpoints` for external IP/port pairs supplied by a host's
-forwarding configuration. These are added to the bound addresses. Each entry has
-an `address` containing a numeric IPv4 or IPv6 literal, and a `port`; omitted or
-zero ports reuse `udp-port`. Brackets and interface scope suffixes are not used in
-the address field. For example, replace both documentation IPs with your own:
+The extension generates this entire configuration in `extensions/nethernet/config.yml`:
 
 ```yaml
-provider:
-  bind-address: '::'
-  udp-port: 19133
-  advertised-endpoints:
-    - address: '203.0.113.10' # Replace with your actual public IPv4.
-      port: 29133
-    - address: '2001:db8::10' # Replace with your actual public IPv6.
-      port: 39133
+signalling: hybrid
+nxs:
+  advertise-addresses: []
+  token: ''
+  endpoint: https://agent.warden.cloud
+  data: {}
 ```
 
-The legacy `advertised-address`/`advertised-port` settings remain supported as an
-additional endpoint. A legacy port override without an address adds that port for
-each discovered bind address. Configured forwarders may translate address families;
-operators must arrange the forwarding themselves. A proxy may forward an external
-endpoint to a loopback bind; only the usable external endpoint is advertised in that
-case. Configuration changes take effect
-after restart, while interface changes on a wildcard listener are rediscovered.
-
-Endpoints are deduplicated and limited to 32. If the combined set exceeds that limit,
-use a concrete bind or fewer explicit mappings. Wildcard, link-local, multicast,
-loopback, documentation and other unusable addresses are not published to external
-providers. Explicit loopback/documentation fixtures are permitted only when the
-provider itself is local. Keep NetherNet UDP separate from Geyser's RakNet listener.
-
-Startup warns when all advertised endpoints are private/shared, or when all are
-IPv6. Private/shared addresses require client LAN, VPN or routed connectivity;
-Warden does not relay game traffic. IPv6-only endpoints cannot serve IPv4-only
-clients. These warnings use the combined bound and external endpoint set, so a
-public forwarded address avoids a misleading warning about a private local bind.
-
-Existing `warden-admission-v1` configuration profiles migrate to
-`nxs-admission-v1`; configured URLs, state directories, keys, tokens and endpoints
-are preserved. Custom profiles are not silently replaced.
-
-## Optional Warden ownership action
-
-Only the optional `cloud.warden.claim` version-1 extension is interpreted as a
-Warden claim action. Its HTTPS URL, text and expiry are displayed to the server
-operator when present and still valid. Use the console command `nethernet claim`
-to explicitly refresh the action through the advertised extension operation.
-The adapter does not refresh automatically, persist action URLs, call an account
-API, or require ownership for transport readiness. Providers that omit this
-extension cause no claim requests and need no Warden behavior.
-
-## Authorization modes
-
-`provider.registration-mode` is `automatic`, `new-service` or `attach-instance`.
-`provider.authorization` is `automatic`, `anonymous-proof-of-work` or
-`bearer-token`. Automatic registration creates a service; automatic authorization
-selects bearer when a token is present and anonymous PoW otherwise.
-
-- Anonymous PoW requests a new service. On Warden it returns a private,
-  optional claim URL.
-- A bearer token plus `new-service` provisions directly into the provider account
-  represented by that token, without PoW.
-- A bearer token plus `attach-instance` joins an existing signalling service and
-  placement. The token is reusable across independently keyed replicas.
-
-Providers decide whether tokens are reusable, narrow, short-lived or single-use,
-and how a wider credential may mint them. Token issuance is outside the protocol.
-
-Tokens are used only for the registration challenge. They are never written to
-`provider-state`, emitted by configuration `toString`, included in request JSON or
-sent to discovered lifecycle endpoints. Machine identity, assigned IDs and ticket
-keys are stored under `provider.state-directory`; give each logical replica its own
-durable directory. Never share or copy that state between live instances on the
-same physical node.
-
-Configuration supports `authorization-token` and `authorization-token-file`.
-For managed environments, these provider-neutral variables override YAML:
-
-| Variable | Purpose |
+| Setting | Behavior |
 | --- | --- |
-| `NETHERNET_SIGNALLING_MODE` | `provider` or explicit `local` opt-out |
-| `NETHERNET_PROVIDER_URL` | Discovery/control origin |
-| `NETHERNET_PROVIDER_PROFILE` | Required advertised operational profile |
-| `NETHERNET_PROVIDER_REGISTRATION_MODE` | `new-service` or `attach-instance` |
-| `NETHERNET_PROVIDER_AUTHORIZATION` | PoW or bearer scheme |
-| `NETHERNET_PROVIDER_TOKEN` | Bearer token value |
-| `NETHERNET_PROVIDER_TOKEN_FILE` | File containing the bearer token |
-| `NETHERNET_PROVIDER_REGION`, `NETHERNET_PROVIDER_POOL` | Immutable placement |
-| `NETHERNET_PROVIDER_TAGS` | JSON string object, for example `{"location":"london","role":"game-proxy"}` |
-| `NETHERNET_PROVIDER_LABEL` | Instance/service display label |
-| `NETHERNET_PROVIDER_STATE_DIRECTORY` | Durable private state path |
-| `NETHERNET_PROVIDER_BIND_ADDRESS`, `NETHERNET_PROVIDER_UDP_PORT` | Native UDP bind |
-| `NETHERNET_PROVIDER_ADVERTISED_ADDRESS`, `NETHERNET_PROVIDER_ADVERTISED_PORT` | Reachable UDP candidate; advertised port 0 reuses the bind port |
-| `NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS` | JSON array of `{"address":"IP","port":29133}` objects; overrides the YAML list |
-| `NETHERNET_PROVIDER_CAPACITY` | Routing capacity, separate from player count |
+| `signalling` | `inbuilt` runs local HTTP signalling; `nxs` registers with the external provider; `hybrid` runs both (default); `none` disables both. Geyser's RakNet listener continues in every mode. |
+| `nxs.advertise-addresses` | Additional numeric `IPv4:port` or `[IPv6]:port` endpoints, added to suitable bound interface addresses. Duplicates are removed. |
+| `nxs.token` | Opaque bearer token, or `file:/path/to/token`. Empty selects anonymous proof of work. |
+| `nxs.endpoint` | Provider HTTPS origin. Defaults to Warden. HTTP is accepted only for loopback development providers. |
+| `nxs.data` | String key/value registration metadata. `region` and `pool` select placement; other keys become tags. |
 
-Environment token value takes precedence over environment token file, which takes
-precedence over YAML token value and YAML token file. Empty values are absent.
+All changes require a restart. There are no config migrations or legacy aliases.
 
-## Examples
+## Listener and identity defaults
 
-- `examples/provider-local.yml`: loopback-only conformance transport.
-- `examples/provider-fleet.yml`: token-authorized London proxy placement.
-- `examples/provider-host.yml`: configuration distributed by a Minecraft host.
-- `examples/kubernetes-proxy-fleet`: StatefulSet replicas joining and draining an
-  existing proxy pool without PoW.
-- `examples/server-host`: customer servers redirected to a host's own provider,
-  with either a secret file/environment token or anonymous PoW.
+Inbuilt HTTP uses Geyser's effective Bedrock bind address and port over TCP.
+If that port matches the Java server port, it is skipped with a warning. Other
+bind failures are reported without preventing NXS startup. Each listener owns
+its resources; an NXS startup failure leaves inbuilt signalling running.
 
-For Warden fleet attachment, create a signal-server-scoped service key with
-`game_server_bootstrap:write`, then delegate the exact region, pool and tag set.
-For Warden direct provisioning, use an organisation-scoped key with
-`provider_service:create`. Those scope names are Warden's mapping; another provider
-can issue its own opaque credentials while using the same wire scheme.
+NXS inherits the same bind address and uses the effective Bedrock port **plus one**
+over UDP, after Geyser has resolved any port cloning. A Bedrock port of 65535 cannot
+supply that additional port. Routing capacity comes from Geyser's advertised maximum
+players. Protocol profile, authorization and registration mode are selected internally.
 
-## Lifecycle and evidence
+A concrete bind publishes that suitable address. An IPv4 wildcard discovers IPv4
+addresses; the native dual-stack `::` wildcard discovers IPv4 and IPv6 addresses.
+Interface changes are picked up during background check-ins. To publish additional
+forwarded addresses:
 
-Provider startup activates the instance, installs and acknowledges ticket keys,
-publishes the host profile, sends a healthy heartbeat and then logs the public
-address. Graceful Geyser shutdown waits for provider drain before closing the native
-endpoint; a crash falls out of rotation when its signed lease expires. Persistent
-replicas recover their assigned identity rather than registering again.
+```yaml
+nxs:
+  advertise-addresses:
+    - '203.0.113.10:29133'
+    - '[2001:db8::10]:39133'
+```
 
-Automatic status uses Geyser's Bedrock query fields and actual session count.
-Capacity/load remain separate routing inputs. Panel fixed status fields remain
-authoritative. Fake transport is limited to loopback and proves only the control
-contract; it cannot accept gameplay. The native `ProviderHostFactory`, stock-client
-admission and real network reachability remain separate acceptance boundaries.
+Replace the documentation addresses with real reachable addresses and arrange UDP
+forwarding to the listener. The combined discovered/configured set is limited to
+32 endpoints. Wildcard, loopback, link-local, multicast and reserved addresses
+are excluded for external providers. Discovery cannot prove public reachability
+or configure forwarding. Startup warns for private-only or IPv6-only endpoints.
+Private endpoints require LAN/VPN routing; Warden does not relay game traffic.
 
-Build beside the owned NetworkCompatible checkout pinned by
-`registration-network.properties`:
+The extension automatically creates a private `identity.p12` for inbuilt signing
+and a `provider-state` directory for the NXS registration and DTLS key/certificate.
+Both live inside `extensions/nethernet`. Preserve this directory on restart and
+mount a separate persistent directory for each live replica. Existing identity
+files are validated and reused. Missing or invalid key pairs fail startup.
+
+## Tokens and metadata
+
+A token's authority determines whether to create a service in an account or attach
+to an existing service. The provider selects and signs the concrete registration
+mode; the host does not guess from the opaque token. No token creates a new service
+using the advertised proof-of-work challenge.
+
+`nxs.data` is immutable registration metadata. For example:
+
+```yaml
+nxs:
+  token: file:/run/secrets/nxs-token
+  data:
+    region: EU
+    pool: proxy
+    location: london
+    role: game-proxy
+```
+
+When any metadata is supplied, omitted region/pool values become `global`/`default`.
+An empty map sends no placement. Warden permits metadata on anonymous new services;
+it grants no authority over another service. Fleet tokens must be delegated the
+exact region, pool and tags. An absent or mismatched fleet placement is rejected.
+Account-scoped `provider_service:create` tokens create services; service-scoped
+`game_server_bootstrap:write` tokens attach instances. Those scope names belong
+to Warden; independent providers can issue their own opaque credentials.
+
+A bare token is used directly. `file:` accepts an absolute path or a path relative
+to the extension directory. Absolute paths and paths starting `./` or `../` also
+select a file. Missing, empty, oversized or multiline token files fail closed.
+Tokens are sent only to registration over the validated same-origin connection;
+they are not copied into durable registration state or diagnostic strings.
+
+## Environment variables
+
+Configurate parses YAML and maps typed values. Its built-in environment source
+configures **loader options**, not arbitrary application fields. This extension
+applies one Configurate overlay after loading/saving, so environment values override
+YAML without being written back. The five corresponding variables are:
 
 ```sh
-bash scripts/build-native-development.sh
-# Tests against a coordinated local checkout and its compiled native repository:
-bash gradlew test --max-workers=2 -PnetworkPath=/absolute/path/to/NetworkCompatible \
-  -PnativeMavenRepository=/absolute/path/to/native-maven
+NETHERNET_SIGNALLING=hybrid
+NETHERNET_NXS_ADVERTISE_ADDRESSES='["1.1.1.1:29133", "[2606:4700:4700::1111]:39133"]'
+NETHERNET_NXS_TOKEN=file:/run/secrets/nxs-token
+NETHERNET_NXS_ENDPOINT=https://agent.warden.cloud
+NETHERNET_NXS_DATA='{"region":"EU","pool":"proxy","location":"london"}'
 ```
+
+The list and map accept YAML or JSON; their environment value replaces the entire
+configured collection. Strings are literal. An empty token disables configured
+bearer authentication. See [Geyser's ConfigLoader](https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/configuration/ConfigLoader.java)
+and [Configurate's environment source](https://github.com/GeyserMC/Configurate/blob/master/core/src/main/java/org/spongepowered/configurate/loader/LoaderOptionSources.java).
+
+## Lifecycle and examples
+
+NXS follows the provider's heartbeat schedule, publishes Geyser status and reports
+ticket-correlated transport/game outcomes. Graceful shutdown drains the provider
+before closing its native endpoint. Inbuilt signalling closes independently.
+`nethernet diagnostics` reports native counters and signed readiness. Optional
+Warden ownership actions appear only through `cloud.warden.claim`; `nethernet claim`
+explicitly refreshes the action. Independent providers need no Warden account API.
+
+Examples cover [anonymous NXS](examples/provider-local.yml),
+[a server host](examples/server-host/README.md) and
+[a Kubernetes fleet](examples/kubernetes-proxy-fleet/README.md).
+The [NXS contract](https://github.com/teamziax/NetworkCompatible/blob/nxs-dev/docs/external-signalling/README.md)
+and [native build instructions](docs/native-admission.md) describe the maintained
+source chain. Native/fixture readiness does not establish stock-client gameplay.

@@ -5,15 +5,14 @@ instead of Warden. Supply a per-customer token in `customer-provider-token`; the
 container reads it from `/run/secrets` and registers the service directly into the
 account represented by that token, with no PoW.
 
-If the host allows anonymous registration instead, remove the token-file variable
-and set `NETHERNET_PROVIDER_AUTHORIZATION=anonymous-proof-of-work`. The same
-`new-service` challenge then performs the host's advertised PoW policy. A panel may
-instead write the token to `authorization-token` in `examples/provider-host.yml`,
-though environment or mounted-secret injection is safer.
+For anonymous registration, remove `NETHERNET_NXS_TOKEN`. Authorization is selected
+automatically. The same five settings can be written in YAML; see
+[provider-host.yml](../provider-host.yml).
 
 The provider must advertise the selected protocol/profile and same-origin
 operations. It does not need to implement Warden's account API: how it issues and
 maps the customer token is provider-specific.
 
-Set `NETHERNET_PUBLIC_ADDRESS` to the host address reachable by clients and forward
-UDP 19133 to the container. A container-private interface is not a public candidate.
+Set `NETHERNET_NXS_ADVERTISE_ADDRESSES` to a JSON list of reachable `IP:port`
+strings and forward UDP 19133 to the container. Replace `/opt/geyser` with the
+chosen image's Geyser working directory; persist `extensions/nethernet`.

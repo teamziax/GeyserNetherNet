@@ -3,7 +3,7 @@
 Provider mode accepts NetherNet connections on a shared UDP socket and passes
 accepted connections into Geyser's existing Bedrock pipeline. The extension
 creates or validates `host-cert.pem` and `host-key.pem` in
-`provider.state-directory`. It publishes the certificate fingerprint, a reachable
+`extensions/nethernet/provider-state`. It publishes the certificate fingerprint, a reachable
 UDP candidate and a fresh endpoint incarnation. Admission keys arrive through
 background registration and key updates.
 
@@ -44,7 +44,7 @@ The extension's host factory uses `AdmissionGate.Limits.defaults()` from Network
 | Tracked token claims, including active and recently used tokens | 8192 |
 | Time for both NetherNet data channels to open after reservation | 15 seconds |
 
-These are transport limits. `provider.capacity` is a separate value advertised
+These are transport limits. Geyser's maximum player count supplies the separate capacity advertised
 to the provider. Network supplies the limits above to the native listener; the
 standalone library defaults of 256 pending requests and 5 seconds do not apply
 here.
@@ -56,15 +56,10 @@ it does not establish that a player reached gameplay.
 
 ## Configure a test instance
 
-Set `mode: provider`, `fake-transport: false` and a `udp-port` separate from
-RakNet. Use profile `nxs-admission-v1` and the intended provider URL and
-authorization mode.
-
-A wildcard `bind-address` needs an explicit `advertised-address` or an unambiguous
-interface selection. Set `advertised-port` when a public NAT mapping uses a
-different port. The generated certificate and private key remain in the private
-state directory; existing keys are validated and reused. See
-[provider configuration](../PROVIDER.md) for the complete settings.
+Set `signalling: nxs` (or use the `hybrid` default). NXS binds Geyser's effective
+Bedrock address and port plus one. Set `nxs.advertise-addresses` to additional
+reachable numeric IPv4/IPv6 endpoints when forwarding is required. Profile and
+authorization are automatic. See [configuration](../PROVIDER.md).
 
 ## Build and verify the dependency chain
 

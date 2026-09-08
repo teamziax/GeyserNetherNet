@@ -28,11 +28,10 @@ public final class NativeProviderHostFactory implements ProviderHostFactory {
                 external.add(new InetSocketAddress(EndpointAddress.parse(address.get("address").getAsString()), address.get("port").getAsInt()));
             }
             boolean localDevelopment = Boolean.parseBoolean(options.getOrDefault("localDevelopment", "false"));
-            int legacyAdvertisedPort = Integer.parseInt(options.getOrDefault("legacyAdvertisedPort", "0"));
-            ProviderEndpoint endpoint = ProviderEndpoint.resolve(udpBind, external, localDevelopment, legacyAdvertisedPort);
+            ProviderEndpoint endpoint = ProviderEndpoint.resolve(udpBind, external, localDevelopment);
             var identity = ProviderHostIdentity.ensure(state);
             return NativeProviderTransport.open(bootstrap, endpoint.bind(), () -> {
-                try { return ProviderEndpoint.resolve(udpBind, external, localDevelopment, legacyAdvertisedPort).advertised(); }
+                try { return ProviderEndpoint.resolve(udpBind, external, localDevelopment).advertised(); }
                 catch (java.io.IOException unavailable) { throw new UncheckedIOException(unavailable); }
             },
                 identity.certificate(), identity.privateKey(), AdmissionGate.Limits.defaults())
