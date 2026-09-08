@@ -8,7 +8,6 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.geyser.extension.nethernet.nethernet.DummyPingChannel;
@@ -54,6 +53,8 @@ public class NetherNetExtension implements Extension {
     private EventLoopGroup eventLoopGroup;
     private Channel netherNetChannel;
     private NetherNetServerSignaling signaling;
+    private EventLoopGroup inbuiltEventLoopGroup;
+    private Channel inbuiltChannel;
 
     @Subscribe
     public void onPostInitialize(GeyserPostInitializeEvent event) {
@@ -79,20 +80,26 @@ public class NetherNetExtension implements Extension {
             return;
         }
 
-        String signallingMode = System.getenv().getOrDefault("NETHERNET_SIGNALLING_MODE", config.mode());
-        if (!signallingMode.equals("local") && !signallingMode.equals("provider")) {
-            logger().error("Unknown signalling mode; choose local or provider."); disable(); return;
-        }
-        if (signallingMode.equals("provider")) { startProvider(); return; }
+        String mode = config.signalling();
+        if (mode.equals("none")) return;
+        if (mode.equals("hybrid") || mode.equals("inbuilt")) startInbuilt();
+        if (mode.equals("hybrid") || mode.equals("nxs")) startProvider();
+    }
 
+    private void startInbuilt() {
+        if (geyserApi().bedrockListener().port() == GeyserImpl.getInstance().config().java().port()) {
+            logger().warning("Skipping inbuilt signalling: its TCP port matches the Java server port.");
+            return;
+        }
         // Keep libdatachannel's own logging out of the way
         NetherNetLogging.setNativeLogLevel("WARN");
 
         // Start up NetherNet
         try {
-            // Build the base signaling instance
+            // Create a private signing identity automatically on the first start.
+            org.geyser.extension.nethernet.admission.InbuiltIdentity.ensure(dataFolder());
             NetherNetHTTPSignaling.Builder signallingBuilder = new NetherNetHTTPSignaling.Builder()
-                .setIdentityKeystore(this.dataFolder().resolve(config.identity().keystore()).toFile(), config.identity().password())
+                .setIdentityKeystore(this.dataFolder().resolve("identity.p12").toFile(), "")
                 .setMotdProvider((host, remoteAddress) -> {
                     BedrockPong pong = GeyserImpl.getInstance().getGeyserServer().onQuery(PING_CHANNEL, remoteAddress);
 
@@ -105,27 +112,22 @@ public class NetherNetExtension implements Extension {
                         .build();
                 });
 
-            // Enable https if configured to do so
-            if (config.https().enabled()) {
-                signallingBuilder.setHttpsKeystore(this.dataFolder().resolve(config.https().keystore()).toFile(), config.https().password());
-            }
-
             this.signaling = signallingBuilder.build();
 
-            this.eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+            this.inbuiltEventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
 
             ServerBootstrap b = new ServerBootstrap();
-            b.group(eventLoopGroup)
+            b.group(inbuiltEventLoopGroup)
                 .channelFactory(NetherNetChannelFactory.server(signaling))
                 .childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance()));
 
             BedrockListener listener = this.geyserApi().bedrockListener();
-            this.netherNetChannel = b.bind(new InetSocketAddress(listener.address(), listener.port())).sync().channel();
+            this.inbuiltChannel = b.bind(new InetSocketAddress(listener.address(), listener.port())).sync().channel();
 
-            this.logger().info("NetherNet listener started on " + (config.https().enabled() ? "https" : "http") + "://" + listener.address() + ":" + listener.port());
+            this.logger().info("Inbuilt signalling started on http://" + listener.address() + ":" + listener.port());
         } catch (Exception e) {
-            this.logger().error("Failed to start NetherNet", e);
-            this.disable();
+            closeInbuiltResources();
+            this.logger().warning("Inbuilt signalling could not bind or initialize; check for an occupied TCP port. NXS can still start.");
         }
     }
 
@@ -134,30 +136,23 @@ public class NetherNetExtension implements Extension {
             ProviderStateStore store = null;
             ProviderTransport initializingTransport = null;
             try {
-                Config.ProviderConfig settings = config.provider();
-                ProviderRuntimeConfiguration runtime = ProviderRuntimeConfiguration.resolve(config, dataFolder(), System.getenv());
+                var listener = geyserApi().bedrockListener();
+                ProviderRuntimeConfiguration runtime = ProviderRuntimeConfiguration.resolve(config, dataFolder(), listener.address(), listener.port(), collectServerStatus().maxPlayers());
                 URI origin = runtime.origin();
-                if (runtime.udpPort() < 1 || runtime.udpPort() > 65535 || runtime.udpPort() == geyserApi().bedrockListener().port()) throw new IOException("Configure a separate NetherNet UDP port");
                 var statePath = runtime.stateDirectory();
                 ProviderTransport transport;
                 if (stopping) return;
                 // Lock the durable instance before identity initialization or opening its endpoint.
                 store = new ProviderStateStore(statePath);
-                if (settings.fakeTransport()) {
-                    if (!java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(origin.getHost())) throw new IOException("Fake transport requires a loopback provider");
-                    transport = new FakeProviderTransport(); logger().warning("Conformance fake transport enabled; this server cannot accept gameplay.");
-                } else {
-                    ProviderHostFactory factory = ServiceLoader.load(ProviderHostFactory.class, getClass().getClassLoader()).findFirst().orElseThrow(() -> new IOException("Native provider host factory is unavailable; readiness cannot start"));
-                    eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
-                    ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance(), gameOutcomes));
-                    ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(runtime.bindAddress(), runtime.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", runtime.profile(),
-                        "advertisedEndpoints", runtime.encodedAdvertisedEndpoints(),
-                        "legacyAdvertisedPort", Integer.toString(runtime.advertisedAddress().isBlank() ? runtime.advertisedPort() : 0),
-                        "localDevelopment", Boolean.toString(java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(origin.getHost())))).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
-                    netherNetChannel = host.channel(); transport = host.transport();
-                    host.warnings().forEach(message -> logger().warning(message));
-                    if (stopping) { transport.close(); netherNetChannel.close(); eventLoopGroup.shutdownGracefully(); return; }
-                }
+                ProviderHostFactory factory = ServiceLoader.load(ProviderHostFactory.class, getClass().getClassLoader()).findFirst().orElseThrow(() -> new IOException("Native provider host factory is unavailable; readiness cannot start"));
+                eventLoopGroup = new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
+                ServerBootstrap bootstrap = new ServerBootstrap().group(eventLoopGroup).childHandler(new NetherNetChannelInitialiser(GeyserImpl.getInstance(), gameOutcomes));
+                ProviderHostFactory.Host host = factory.open(bootstrap, new InetSocketAddress(runtime.bindAddress(), runtime.udpPort()), Map.of("stateDirectory", statePath.toAbsolutePath().toString(), "profile", runtime.profile(),
+                    "advertisedEndpoints", runtime.encodedAdvertisedEndpoints(),
+                    "localDevelopment", Boolean.toString(java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(origin.getHost())))).toCompletableFuture().get(30, java.util.concurrent.TimeUnit.SECONDS);
+                netherNetChannel = host.channel(); transport = host.transport();
+                host.warnings().forEach(message -> logger().warning(message));
+                if (stopping) { transport.close(); netherNetChannel.close(); eventLoopGroup.shutdownGracefully(); return; }
                 initializingTransport = transport;
                 transport = new GameOutcomeTransport(transport, gameOutcomes);
                 ProviderClient client = new ProviderClient(runtime.clientConfiguration(), store, transport,
@@ -172,15 +167,15 @@ public class NetherNetExtension implements Extension {
                     wardenClaim = new WardenClaimAdapter(client);
                 }
                 client.start().whenComplete((registration, failure) -> {
-                    if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); shutdown(); return; }
+                    if (failure != null) { logger().error("Provider startup failed: " + providerFailure(failure)); stopProvider(); return; }
                     logger().info("Provider address: " + registration.get("publicAddress").getAsString() + " (instance " + registration.get("instanceId").getAsString() + ")");
                     WardenClaimAdapter claim = wardenClaim;
                     if (claim != null) claim.current().thenAccept(action -> action.ifPresent(value -> logger().info(value.message())));
                 });
             } catch (Exception e) {
                 if (initializingTransport != null) initializingTransport.close();
-                logger().error("Provider startup failed: " + e.getMessage());
-                if (eventLoopGroup != null) eventLoopGroup.shutdownGracefully();
+                logger().error("Provider startup failed: " + (e instanceof IOException ? e.getMessage() : providerFailure(e)));
+                closeNetworkResources();
             } finally {
                 if (store != null) try { store.close(); } catch (IOException ignored) {}
             }
@@ -190,7 +185,7 @@ public class NetherNetExtension implements Extension {
     private ServerStatus collectServerStatus() {
         GeyserImpl geyser = GeyserImpl.getInstance();
         BedrockPong pong = geyser.getGeyserServer().onQuery(PING_CHANNEL, new InetSocketAddress("127.0.0.1", 0));
-        return GeyserStatusCollector.snapshot(pong, geyser.getSessionManager().size(), config.provider().level(), config.provider().gameType());
+        return GeyserStatusCollector.snapshot(pong, geyser.getSessionManager().size(), "", 0);
     }
 
     /** Programmatic complete status override; panel fixed values still take precedence at the provider. */
@@ -273,11 +268,24 @@ public class NetherNetExtension implements Extension {
         synchronized (providerLifecycle) {
             if (stopping) return;
             stopping = true;
+            closeInbuiltResources();
+            stopProvider();
+        }
+    }
+
+    private void stopProvider() {
+        synchronized (providerLifecycle) {
             if (providerShutdown != null) { providerShutdown.close(); providerShutdown = null; }
             else closeNetworkResources();
             providerClient = null;
             wardenClaim = null;
         }
+    }
+
+    private void closeInbuiltResources() {
+        if (inbuiltChannel != null) inbuiltChannel.close();
+        if (signaling != null) signaling.close();
+        if (inbuiltEventLoopGroup != null) inbuiltEventLoopGroup.shutdownGracefully();
     }
 
     private void closeNetworkResources() {

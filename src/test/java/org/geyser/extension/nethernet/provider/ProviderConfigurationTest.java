@@ -1,103 +1,75 @@
 package org.geyser.extension.nethernet.provider;
+
 import org.geyser.extension.nethernet.ConfigLoader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import java.io.IOException;
 import java.nio.file.*;
 import java.util.Map;
+import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
+
 class ProviderConfigurationTest {
-    @Test void loadsMultipleExternalEndpointsAndEnvironmentOverride(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yml"), """
-            mode: provider
-            provider:
-              udp-port: 19133
-              advertised-endpoints:
-                - address: 8.8.8.8
-                  port: 29133
-                - address: '2606:4700:4700::1111'
-                  port: 39133
-            """);
-        var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile());
-        var runtime = ProviderRuntimeConfiguration.resolve(config, dir, Map.of());
-        assertEquals(2, runtime.advertisedEndpoints().size());
-        assertEquals(29133, runtime.advertisedEndpoints().get(0).getPort());
-        assertEquals(39133, runtime.advertisedEndpoints().get(1).getPort());
-        var overridden = ProviderRuntimeConfiguration.resolve(config, dir, Map.of("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS", "[{\"address\":\"1.1.1.1\"}]"));
-        assertEquals(java.util.List.of(new java.net.InetSocketAddress("1.1.1.1", 19133)), overridden.advertisedEndpoints());
-        for (String invalid : java.util.List.of("{}", "[{\"address\":\"game.example\"}]", "[{\"address\":\"8.8.8.8\",\"port\":1.5}]", "[{\"address\":\"8.8.8.8\",\"port\":65536}]"))
-            assertThrows(java.io.IOException.class, () -> ProviderRuntimeConfiguration.resolve(config, dir, Map.of("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS", invalid)));
+    private ProviderRuntimeConfiguration runtime(Path dir, String yaml, Map<String,String> env) throws Exception {
+        Files.writeString(dir.resolve("config.yml"), yaml);
+        return ProviderRuntimeConfiguration.resolve(ConfigLoader.loadConfig(dir.resolve("config.yml").toFile(), env), dir, "::", 20000, 40);
     }
-
-    @Test void defaultsToAnonymousWardenProviderAndSupportsBearerFleetEnvironment(@TempDir Path dir) throws Exception {
-        var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile());
-        assertEquals("provider", config.mode());
-        assertEquals(19133, config.provider().udpPort());
-        assertFalse(config.provider().fakeTransport());
-        var standalone = ProviderRuntimeConfiguration.resolve(config, dir, Map.of());
-        assertEquals("https://agent.warden.cloud", standalone.origin().toString());
-        assertEquals("nxs-admission-v1", standalone.profile());
-        assertEquals("new-service", standalone.registrationMode());
-        assertEquals("anonymous-proof-of-work", standalone.authorizationScheme());
-
-        Files.copy(Path.of("examples/provider-fleet.yml"), dir.resolve("fleet.yml"));
-        var fleet = ConfigLoader.loadConfig(dir.resolve("fleet.yml").toFile());
-        var runtime = ProviderRuntimeConfiguration.resolve(fleet, dir, Map.of(
-            "NETHERNET_PROVIDER_TOKEN", "fleet-secret",
-            "NETHERNET_PROVIDER_URL", "https://signal.example.net"
-        ));
-        assertEquals("https://signal.example.net", runtime.origin().toString());
-        assertEquals("attach-instance", runtime.registrationMode());
-        assertEquals("bearer-token", runtime.authorizationScheme());
-        assertEquals(Map.of("location", "london", "role", "game-proxy"), runtime.tags());
-        assertEquals(100, runtime.capacity());
-        assertFalse(runtime.toString().contains("fleet-secret"));
-        assertFalse(runtime.clientConfiguration().toString().contains("fleet-secret"));
+    @Test void freshConfigHasOnlyTheFiveOptionsAndInheritsGeyser(@TempDir Path dir) throws Exception {
+        var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile(), Map.of());
+        assertEquals("hybrid", config.signalling());
+        String yaml = Files.readString(dir.resolve("config.yml"));
+        for (String old : List.of("provider:", "mode:", "https:", "identity:", "capacity:", "state-directory:", "fake-transport:")) assertFalse(yaml.lines().anyMatch(line -> line.stripLeading().startsWith(old)), old);
+        var result = ProviderRuntimeConfiguration.resolve(config, dir, "::", 20000, 40);
+        assertEquals("https://agent.warden.cloud", result.origin().toString());
+        assertEquals("::", result.bindAddress()); assertEquals(20001, result.udpPort());
+        assertEquals(40, result.capacity()); assertEquals(dir.resolve("provider-state"), result.stateDirectory());
+        assertEquals("automatic", result.clientConfiguration().registrationMode());
+        assertEquals("anonymous-proof-of-work", result.clientConfiguration().authorizationScheme());
     }
-
-    @ParameterizedTest @ValueSource(ints = {1, 3})
-    void upgradesTheLegacyProfileWithoutReplacingOperatorIdentityOrEndpointSettings(int version, @TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config.yml"), """
-            config-version: %d
-            mode: provider
-            operator-extra: preserved
-            provider:
-              profile: warden-admission-v1
-              state-directory: established-instance
-              bind-address: 100.117.6.116
-              udp-port: 19133
-              authorization-token: preserved-token
-            """.formatted(version));
-        var runtime = ProviderRuntimeConfiguration.resolve(ConfigLoader.loadConfig(dir.resolve("config.yml").toFile()), dir,
-            Map.of("NETHERNET_PROVIDER_ADVERTISED_ADDRESS", "203.0.113.9", "NETHERNET_PROVIDER_ADVERTISED_PORT", "29133"));
-        assertEquals("nxs-admission-v1", runtime.profile());
-        assertEquals(dir.resolve("established-instance"), runtime.stateDirectory());
-        assertEquals("preserved-token", runtime.authorizationToken());
-        assertEquals("100.117.6.116", runtime.bindAddress());
-        assertEquals(19133, runtime.udpPort());
-        assertEquals("203.0.113.9", runtime.advertisedAddress());
-        assertEquals(29133, runtime.advertisedPort());
-        assertFalse(Files.readString(dir.resolve("config.yml")).contains("warden-admission-v1"));
-        assertTrue(Files.readString(dir.resolve("config.yml")).contains("operator-extra: preserved"));
+    @ParameterizedTest @ValueSource(strings = {"inbuilt", "nxs", "hybrid", "none"})
+    void supportsEveryModeAndEnvironmentWinsWithoutPersisting(String mode, @TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("config.yml"), "signalling: none\nnxs:\n  token: yaml-token\n");
+        var config = ConfigLoader.loadConfig(dir.resolve("config.yml").toFile(), Map.of(
+            "NETHERNET_SIGNALLING", mode, "NETHERNET_NXS_TOKEN", "env-secret", "NETHERNET_NXS_ENDPOINT", "https://signal.example.net",
+            "NETHERNET_NXS_DATA", "{region: EU, pool: proxy, location: london}",
+            "NETHERNET_NXS_ADVERTISE_ADDRESSES", "['1.1.1.1:29133', '[2606:4700:4700::1111]:39133', '1.1.1.1:29133']"));
+        var result = ProviderRuntimeConfiguration.resolve(config, dir, "::", 19132, 20);
+        assertEquals(mode, config.signalling()); assertEquals("env-secret", result.authorizationToken());
+        assertEquals("https://signal.example.net", result.origin().toString());
+        assertEquals("EU", result.region()); assertEquals("proxy", result.pool()); assertEquals(Map.of("location", "london"), result.tags());
+        assertEquals(2, result.advertisedEndpoints().size()); assertEquals(39133, result.advertisedEndpoints().get(1).getPort());
+        assertFalse(Files.readString(dir.resolve("config.yml")).contains("env-secret"));
+        assertFalse(result.toString().contains("env-secret")); assertFalse(result.clientConfiguration().toString().contains("env-secret"));
     }
-
-    @Test void acceptsAHostSecretFromConfigOrEnvironmentFile(@TempDir Path dir) throws Exception {
-        Files.writeString(dir.resolve("config-token.yml"), """
-            mode: provider
-            provider:
-              url: https://signal.host.example
-              registration-mode: new-service
-              authorization: bearer-token
-              authorization-token: config-secret
-            """);
-        var configured = ProviderRuntimeConfiguration.resolve(ConfigLoader.loadConfig(dir.resolve("config-token.yml").toFile()), dir, Map.of());
-        assertEquals("config-secret", configured.authorizationToken());
-
-        Files.writeString(dir.resolve("host-token"), "environment-file-secret\n");
-        var environment = ProviderRuntimeConfiguration.resolve(ConfigLoader.loadConfig(dir.resolve("config-token.yml").toFile()), dir,
-            Map.of("NETHERNET_PROVIDER_TOKEN_FILE", dir.resolve("host-token").toString()));
-        assertEquals("environment-file-secret", environment.authorizationToken());
-        assertFalse(environment.toString().contains("environment-file-secret"));
+    @Test void arbitraryMetadataAndRegionOnlyDoNotRequireExtraOptions(@TempDir Path dir) throws Exception {
+        var result = runtime(dir, "nxs:\n  data:\n    region: EU\n    role: proxy\n", Map.of());
+        assertEquals("EU", result.region()); assertEquals("default", result.pool()); assertEquals(Map.of("role", "proxy"), result.tags());
+        assertNull(result.authorizationToken());
+    }
+    @Test void readsTokenFilesAndFailsClosedWithoutLeakingContents(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("token"), "file-secret\n");
+        for (String source : List.of("file:token", "./token", dir.resolve("token").toString())) {
+            var result = runtime(dir, "nxs:\n  token: '" + source + "'\n", Map.of());
+            assertEquals("file-secret", result.authorizationToken());
+        }
+        for (String value : List.of("file:missing", "file:", "bad secret\n")) {
+            var failure = assertThrows(IOException.class, () -> runtime(dir, "", Map.of("NETHERNET_NXS_TOKEN", value)));
+            assertFalse(failure.toString().contains("bad secret"));
+        }
+        Files.writeString(dir.resolve("token"), "\n");
+        assertThrows(IOException.class, () -> runtime(dir, "nxs:\n  token: file:token\n", Map.of()));
+    }
+    @ParameterizedTest @ValueSource(strings = {"example.com:19133", "::1:19133", "[::]:19133", "1.1.1.1:0", "1.1.1.1:65536", "224.0.0.1:19133", "1.1.1.1:1.5", "[fe80::1]:19133"})
+    void rejectsInvalidEndpoints(String endpoint, @TempDir Path dir) {
+        assertThrows(IOException.class, () -> runtime(dir, "nxs:\n  advertise-addresses: ['" + endpoint + "']\n", Map.of()));
+    }
+    @Test void rejectsInvalidModesPortsAndEnvironmentShapes(@TempDir Path dir) throws Exception {
+        assertThrows(IOException.class, () -> runtime(dir, "signalling: invalid\n", Map.of()));
+        assertThrows(IOException.class, () -> runtime(dir, "", Map.of("NETHERNET_NXS_DATA", "[]")));
+        assertThrows(IOException.class, () -> runtime(dir, "", Map.of("NETHERNET_NXS_ADVERTISE_ADDRESSES", "{}")));
+        var config = ConfigLoader.loadConfig(dir.resolve("fresh.yml").toFile(), Map.of());
+        assertThrows(IOException.class, () -> ProviderRuntimeConfiguration.resolve(config, dir, "0.0.0.0", 65535, 20));
     }
 }

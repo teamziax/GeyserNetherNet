@@ -15,7 +15,7 @@ kubectl scale statefulset nethernet-proxy --replicas=5
 kubectl scale statefulset nethernet-proxy --replicas=2
 ```
 
-Replace the image and storage class for your platform. The manifest demonstrates
+Replace the image and storage class for your platform, and `/opt/geyser` with the image's Geyser working directory. The manifest demonstrates
 registration lifecycle only: production also needs routable UDP addressing for
 each advertised native candidate. For Warden, delegate exactly `EU`, `proxy`,
 `location=london`, `role=game-proxy` to the service-scoped token before deploying.

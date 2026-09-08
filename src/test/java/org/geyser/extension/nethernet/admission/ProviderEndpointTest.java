@@ -50,11 +50,6 @@ class ProviderEndpointTest {
         assertTrue(result.warnings().isEmpty());
     }
 
-    @Test void legacyPortOnlyConfigurationRetainsBothInternalAndForwardedPorts() throws Exception {
-        var result = ProviderEndpoint.resolve(endpoint("0.0.0.0", 19133), List.of(), false, List.of(address("8.8.8.8")), 29133);
-        assertEquals(List.of(endpoint("8.8.8.8", 19133), endpoint("8.8.8.8", 29133)), result.advertised());
-    }
-
     @Test void unusableOrEmptySnapshotsNeverBecomeProfiles() throws Exception {
         var bind = endpoint("0.0.0.0", 19133);
         for (String ip : List.of("0.0.0.0", "::", "169.254.1.1", "fe80::1", "127.0.0.1", "224.0.0.1", "203.0.113.1"))

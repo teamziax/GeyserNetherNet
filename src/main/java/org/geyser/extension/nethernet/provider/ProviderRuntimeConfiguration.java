@@ -1,86 +1,83 @@
 package org.geyser.extension.nethernet.provider;
 
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import org.cloudburstmc.netty.signalling.ProviderClient;
+import org.cloudburstmc.netty.signalling.admission.EndpointAddress;
 import org.geyser.extension.nethernet.Config;
-
 import java.io.IOException;
 import java.net.URI;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
-import java.util.List;
-import java.util.ArrayList;
-import java.net.InetSocketAddress;
-import org.cloudburstmc.netty.signalling.admission.EndpointAddress;
-import java.util.TreeMap;
+import java.util.*;
 
-/** Resolves vendor-neutral environment overrides without ever rendering secrets. */
+/** Validated NXS settings, with listener and status defaults inherited from Geyser. */
 public record ProviderRuntimeConfiguration(
-    String signallingMode, URI origin, String profile, Path stateDirectory, String registrationMode,
-    String authorizationScheme, String authorizationToken, String region, String pool,
+    URI origin, Path stateDirectory, String authorizationToken, String region, String pool,
     Map<String, String> tags, String label, String bindAddress, int udpPort,
-    String advertisedAddress, int advertisedPort, List<InetSocketAddress> advertisedEndpoints, int capacity
+    List<InetSocketAddress> advertisedEndpoints, int capacity
 ) {
-    public static ProviderRuntimeConfiguration resolve(Config config, Path dataDirectory, Map<String, String> environment) throws IOException {
-        Config.ProviderConfig provider = config.provider();
-        String signallingMode = value(environment, "NETHERNET_SIGNALLING_MODE", config.mode());
-        URI origin = URI.create(value(environment, "NETHERNET_PROVIDER_URL", provider.url()));
-        String profile = value(environment, "NETHERNET_PROVIDER_PROFILE", provider.profile());
-        Path stateDirectory = resolvePath(dataDirectory, value(environment, "NETHERNET_PROVIDER_STATE_DIRECTORY", provider.stateDirectory()));
-        String token = secret(environment, "NETHERNET_PROVIDER_TOKEN", "NETHERNET_PROVIDER_TOKEN_FILE", provider.authorizationToken(), provider.authorizationTokenFile(), dataDirectory);
-        String requestedMode = value(environment, "NETHERNET_PROVIDER_REGISTRATION_MODE", provider.registrationMode());
-        String registrationMode = requestedMode.equals("automatic") ? ProviderClient.NEW_SERVICE : requestedMode;
-        String requestedAuthorization = value(environment, "NETHERNET_PROVIDER_AUTHORIZATION", provider.authorization());
-        String authorization = requestedAuthorization.equals("automatic")
-            ? token == null ? ProviderClient.ANONYMOUS_PROOF_OF_WORK : ProviderClient.BEARER_TOKEN
-            : requestedAuthorization;
-        String region = nullable(value(environment, "NETHERNET_PROVIDER_REGION", provider.region()));
-        String pool = nullable(value(environment, "NETHERNET_PROVIDER_POOL", provider.pool()));
-        Map<String, String> tags = environment.containsKey("NETHERNET_PROVIDER_TAGS")
-            ? parseTags(environment.get("NETHERNET_PROVIDER_TAGS"))
-            : new TreeMap<>(provider.tags() == null ? Map.of() : provider.tags());
-        String label = value(environment, "NETHERNET_PROVIDER_LABEL", provider.label());
-        String bindAddress = value(environment, "NETHERNET_PROVIDER_BIND_ADDRESS", provider.bindAddress());
-        int udpPort = integer(environment, "NETHERNET_PROVIDER_UDP_PORT", provider.udpPort());
-        String advertisedAddress = value(environment, "NETHERNET_PROVIDER_ADVERTISED_ADDRESS", provider.advertisedAddress());
-        int advertisedPort = integer(environment, "NETHERNET_PROVIDER_ADVERTISED_PORT", provider.advertisedPort());
-        if (udpPort < 1 || udpPort > 65535 || advertisedPort < 0 || advertisedPort > 65535)
-            throw new IOException("Provider UDP ports must be 1-65535 (advertised-port may be 0 to reuse udp-port)");
-        List<InetSocketAddress> endpoints = new ArrayList<>();
-        if (environment.containsKey("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS")) {
-            try {
-                var values = JsonParser.parseString(environment.get("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS")).getAsJsonArray();
-                for (var value : values) {
-                    JsonObject endpoint = value.getAsJsonObject();
-                    if (!endpoint.get("address").isJsonPrimitive() || !endpoint.getAsJsonPrimitive("address").isString()) throw new IllegalArgumentException();
-                    int port = endpoint.has("port") ? Integer.parseInt(endpoint.get("port").getAsString()) : 0;
-                    endpoints.add(endpoint(endpoint.get("address").getAsString(), port, udpPort));
-                }
-            } catch (RuntimeException invalid) { throw new IOException("NETHERNET_PROVIDER_ADVERTISED_ENDPOINTS must be a JSON array of address/port objects", invalid); }
-        } else {
-            for (var endpoint : provider.advertisedEndpoints()) endpoints.add(endpoint(endpoint.address(), endpoint.port(), udpPort));
+    public static ProviderRuntimeConfiguration resolve(Config config, Path directory, String bedrockAddress, int bedrockPort, int maxPlayers) throws IOException {
+        var nxs = config.nxs();
+        URI origin;
+        try { origin = URI.create(nxs.endpoint()); org.cloudburstmc.netty.signalling.ProviderCrypto.origin(origin); }
+        catch (RuntimeException invalid) { throw new IOException("nxs.endpoint must be an HTTPS origin (HTTP is allowed only on loopback)"); }
+        String token = token(nxs.token(), directory);
+        Map<String, String> tags = new TreeMap<>(nxs.data());
+        String region = tags.remove("region"), pool = tags.remove("pool");
+        if (region != null || pool != null || !tags.isEmpty()) {
+            if (region == null) region = "global";
+            if (pool == null) pool = "default";
         }
-        if (advertisedAddress != null && !advertisedAddress.isBlank()) endpoints.add(endpoint(advertisedAddress, advertisedPort, udpPort));
-        endpoints = endpoints.stream().distinct().toList();
-        if (endpoints.size() > 32) throw new IOException("Configure at most 32 advertised endpoints");
-        int capacity = integer(environment, "NETHERNET_PROVIDER_CAPACITY", provider.capacity());
-        // Reuse the library's complete mode, placement and tag validation before opening native resources.
-        new ProviderClient.Configuration(origin, profile, label, registrationMode, authorization, token, region, pool, tags);
-        return new ProviderRuntimeConfiguration(signallingMode, origin, profile, stateDirectory, registrationMode, authorization, token, region, pool,
-            Map.copyOf(tags), label, bindAddress, udpPort, advertisedAddress, advertisedPort, endpoints, capacity);
+        Path state = directory.resolve("provider-state");
+        String bind = bedrockAddress;
+        int port = bedrockPort + 1;
+        if (port < 1 || port > 65535 || port == bedrockPort) throw new IOException("NXS needs a separate UDP port; Geyser's Bedrock port must leave room for port + 1");
+        Set<InetSocketAddress> endpoints = new LinkedHashSet<>();
+        for (String address : nxs.advertiseAddresses()) endpoints.add(endpoint(address));
+        if (endpoints.size() > 32) throw new IOException("nxs.advertise-addresses allows at most 32 endpoints");
+        int capacity = Math.max(1, maxPlayers);
+        if (capacity < 1 || capacity > 1000000) throw new IOException("Invalid inherited routing capacity");
+        String label = "Geyser";
+        var runtime = new ProviderRuntimeConfiguration(origin, state, token, region, pool, Map.copyOf(tags), label,
+            bind, port, List.copyOf(endpoints), capacity);
+        try { runtime.clientConfiguration(); }
+        catch (IllegalArgumentException invalid) { throw new IOException("Invalid nxs.data: region/pool and tag names or values exceed the NXS limits"); }
+        return runtime;
     }
 
+    public String profile() { return "nxs-admission-v1"; }
     public ProviderClient.Configuration clientConfiguration() {
-        return new ProviderClient.Configuration(origin, profile, label, registrationMode, authorizationScheme, authorizationToken, region, pool, tags);
+        return new ProviderClient.Configuration(origin, profile(), label, ProviderClient.AUTOMATIC,
+            authorizationToken == null ? ProviderClient.ANONYMOUS_PROOF_OF_WORK : ProviderClient.BEARER_TOKEN,
+            authorizationToken, region, pool, tags);
     }
-
-    private static InetSocketAddress endpoint(String address, int port, int udpPort) throws IOException {
-        if (port < 0 || port > 65535) throw new IOException("Advertised endpoint port must be 1-65535, or 0 to reuse udp-port");
-        return new InetSocketAddress(EndpointAddress.parse(address), port == 0 ? udpPort : port);
+    private static InetSocketAddress endpoint(String value) throws IOException {
+        try {
+            var match = java.util.regex.Pattern.compile("(?:\\[([^\\]]+)\\]|([^:]+)):([0-9]{1,5})").matcher(value);
+            if (!match.matches()) throw new IllegalArgumentException();
+            int port = Integer.parseInt(match.group(3));
+            if (port < 1 || port > 65535) throw new IllegalArgumentException();
+            var address = EndpointAddress.parse(match.group(1) == null ? match.group(2) : match.group(1));
+            if (address.isAnyLocalAddress() || address.isMulticastAddress() || address.isLinkLocalAddress()) throw new IllegalArgumentException();
+            return new InetSocketAddress(address, port);
+        } catch (Exception invalid) { throw new IOException("nxs.advertise-addresses entries must be numeric IPv4:port or [IPv6]:port with ports 1-65535"); }
     }
-
+    private static String token(String value, Path directory) throws IOException {
+        if (value == null || value.isBlank()) return null;
+        value = value.trim();
+        boolean file = value.startsWith("file:") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../");
+        if (file) {
+            try {
+                Path source = path(directory, value.startsWith("file:") ? value.substring(5) : value);
+                if (!Files.isRegularFile(source) || Files.size(source) > 16384) throw new IOException();
+                value = Files.readString(source).trim();
+            } catch (Exception invalid) { throw new IOException("nxs.token file must be readable and contain at most 16384 bytes"); }
+        }
+        if (value.isBlank() || value.length() > 16384 || value.chars().anyMatch(c -> c <= 32 || c == 127)) throw new IOException("nxs.token must contain one non-empty bearer token");
+        return value;
+    }
+    private static Path path(Path directory, String value) { Path path = Path.of(value); return (path.isAbsolute() ? path : directory.resolve(path)).normalize(); }
     public String encodedAdvertisedEndpoints() {
         var values = new com.google.gson.JsonArray();
         for (var endpoint : advertisedEndpoints) {
@@ -88,51 +85,5 @@ public record ProviderRuntimeConfiguration(
         }
         return values.toString();
     }
-
-    private static String secret(Map<String, String> environment, String directName, String fileName, String configured, String configuredFile, Path dataDirectory) throws IOException {
-        String direct = nullable(environment.get(directName));
-        if (direct != null) return direct;
-        String environmentFile = nullable(environment.get(fileName));
-        if (environmentFile != null) return readSecret(resolvePath(dataDirectory, environmentFile));
-        direct = nullable(configured);
-        return direct != null ? direct : nullable(configuredFile) == null ? null : readSecret(resolvePath(dataDirectory, configuredFile));
-    }
-
-    private static String readSecret(Path path) throws IOException {
-        String secret = Files.readString(path).trim();
-        if (secret.isEmpty()) throw new IOException("Provider secret file is empty: " + path);
-        return secret;
-    }
-
-    private static Map<String, String> parseTags(String encoded) throws IOException {
-        try {
-            JsonObject object = JsonParser.parseString(encoded).getAsJsonObject();
-            Map<String, String> tags = new TreeMap<>();
-            for (var entry : object.entrySet()) tags.put(entry.getKey(), entry.getValue().getAsString());
-            return tags;
-        } catch (RuntimeException invalid) {
-            throw new IOException("NETHERNET_PROVIDER_TAGS must be a JSON string object", invalid);
-        }
-    }
-
-    private static int integer(Map<String, String> environment, String name, int fallback) throws IOException {
-        try { return environment.containsKey(name) ? Integer.parseInt(environment.get(name)) : fallback; }
-        catch (NumberFormatException invalid) { throw new IOException(name + " must be an integer", invalid); }
-    }
-
-    private static Path resolvePath(Path dataDirectory, String value) {
-        Path path = Path.of(value);
-        return path.isAbsolute() ? path.normalize() : dataDirectory.resolve(path).normalize();
-    }
-
-    private static String value(Map<String, String> environment, String name, String fallback) {
-        return environment.containsKey(name) ? environment.get(name) : fallback;
-    }
-
-    private static String nullable(String value) { return value == null || value.isBlank() ? null : value.trim(); }
-
-    @Override public String toString() {
-        return "ProviderRuntimeConfiguration[signallingMode=" + signallingMode + ", origin=" + origin + ", profile=" + profile +
-            ", registrationMode=" + registrationMode + ", authorizationScheme=" + authorizationScheme + ", region=" + region + ", pool=" + pool + "]";
-    }
+    @Override public String toString() { return "ProviderRuntimeConfiguration[origin=" + origin + ", profile=" + profile() + "]"; }
 }
